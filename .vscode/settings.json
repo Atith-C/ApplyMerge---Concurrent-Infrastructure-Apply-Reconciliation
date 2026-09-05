@@ -1,0 +1,9 @@
+{
+  "python.defaultInterpreterPath": "C:\\Users\\adith\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["apply_merge", "-p", "no:cacheprovider"],
+  "python.analysis.extraPaths": [
+    "."
+  ],
+  "python-envs.defaultEnvManager": "ms-python.python:system"
+}

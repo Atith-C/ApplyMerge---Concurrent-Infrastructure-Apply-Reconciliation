@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ApplyMerge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    code, .mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900">
+<div class="max-w-6xl mx-auto px-6 py-8">
+
+  <header class="mb-6">
+    <h1 class="text-2xl font-semibold tracking-tight">ApplyMerge</h1>
+    <p class="text-sm text-slate-600 mt-1 max-w-3xl">
+      Two operators change the same infrastructure at the same time. Every change declares its
+      preconditions and postconditions; the state declares invariants. The engine decides whether
+      both intents survive &mdash; and refuses, with a reason, when they cannot.
+    </p>
+  </header>
+
+  <!-- Declared invariants -->
+  <section class="mb-6 bg-white rounded-lg border border-slate-200 p-4">
+    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Declared invariants</h2>
+    <div id="invariants" class="grid gap-2 sm:grid-cols-2 text-sm"></div>
+  </section>
+
+  <!-- Scenario picker -->
+  <section class="mb-6">
+    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Scenarios</h2>
+    <div id="picker" class="flex flex-wrap gap-2"></div>
+    <p id="scenario-description" class="text-sm text-slate-600 mt-3"></p>
+  </section>
+
+  <!-- The two concurrent changes -->
+  <section id="changes" class="grid gap-4 md:grid-cols-2 mb-6"></section>
+
+  <!-- Result -->
+  <section id="result"></section>
+
+  <footer class="mt-10 text-xs text-slate-500">
+    Backed by <a class="underline" href="/docs">/docs</a> &middot; every verdict below is produced by
+    <code>reconcile()</code> and checked against the declared invariants.
+  </footer>
+</div>
+
+<script>
+const BADGES = {
+  MERGED:             { label: "MERGED",             box: "bg-emerald-50 border-emerald-300", chip: "bg-emerald-600" },
+  CONFLICT:           { label: "CONFLICT",           box: "bg-rose-50 border-rose-300",       chip: "bg-rose-600" },
+  ORDER_DEPENDENT:    { label: "ORDER-DEPENDENT",    box: "bg-amber-50 border-amber-300",     chip: "bg-amber-600" },
+  INVARIANT_REJECTED: { label: "INVARIANT-REJECTED", box: "bg-violet-50 border-violet-300",   chip: "bg-violet-600" },
+};
+
+let scenarios = [];
+let current = null;      // the ReconciliationResult being displayed
+let orderView = "both";  // "ab" | "ba" | "both"
+
+const $ = (id) => document.getElementById(id);
+const val = (v) => JSON.stringify(v);
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+async function boot() {
+  const [state, list] = await Promise.all([
+    fetch("/state").then((r) => r.json()),
+    fetch("/scenarios").then((r) => r.json()),
+  ]);
+  scenarios = list;
+  renderInvariants(state.invariants);
+  renderPicker();
+  select(scenarios[0].name);
+}
+
+function renderInvariants(invariants) {
+  $("invariants").innerHTML = invariants.map((inv) => `
+    <div class="border border-slate-200 rounded px-3 py-2" data-invariant="${esc(inv.name)}">
+      <div class="mono text-xs font-semibold text-slate-800">${esc(inv.name)}</div>
+      <div class="text-slate-600 text-xs mt-0.5">${esc(inv.description)}</div>
+    </div>`).join("");
+}
+
+function renderPicker() {
+  $("picker").innerHTML = scenarios.map((s) => `
+    <button data-scenario="${esc(s.name)}"
+            class="px-3 py-2 rounded border text-sm font-medium bg-white border-slate-300 hover:border-slate-500">
+      ${esc(s.name.replace(/_/g, " "))}
+    </button>`).join("");
+  $("picker").querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => select(b.dataset.scenario)));
+}
+
+async function select(name) {
+  orderView = "both";
+  const scenario = scenarios.find((s) => s.name === name);
+
+  $("picker").querySelectorAll("button").forEach((b) => {
+    const on = b.dataset.scenario === name;
+    b.className = "px-3 py-2 rounded border text-sm font-medium " +
+      (on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 hover:border-slate-500");
+  });
+  $("scenario-description").textContent = scenario.description;
+  renderChanges(scenario.change_a, scenario.change_b);
+  $("result").innerHTML = `<p class="text-sm text-slate-500">Reconciling&hellip;</p>`;
+
+  current = await fetch(`/scenarios/${name}/run`, { method: "POST" }).then((r) => r.json());
+  renderResult();
+}
+
+function changeCard(change, who, tone) {
+  const pres = change.preconditions.length
+    ? change.preconditions.map((p) => `<li class="mono text-xs">${esc(p.field)} ${esc(p.op)} ${esc(val(p.value))}</li>`).join("")
+    : `<li class="text-xs text-slate-400 italic">none declared</li>`;
+  const posts = change.postconditions
+    .map((p) => `<li class="mono text-xs">${esc(p.field)} = ${esc(val(p.value))}</li>`).join("");
+
+  return `
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      <div class="px-4 py-2 ${tone} text-white flex items-baseline justify-between">
+        <span class="font-semibold text-sm">${who} &middot; ${esc(change.origin)}</span>
+        <span class="mono text-xs opacity-90">${esc(change.id)}</span>
+      </div>
+      <div class="p-4">
+        <p class="text-sm text-slate-700">${esc(change.description)}</p>
+        <p class="mono text-xs text-slate-500 mt-1">target: ${esc(change.resource_id)}</p>
+        <div class="mt-3">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Preconditions</div>
+          <ul class="mt-1 space-y-0.5">${pres}</ul>
+        </div>
+        <div class="mt-3">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Postconditions</div>
+          <ul class="mt-1 space-y-0.5">${posts}</ul>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderChanges(a, b) {
+  $("changes").innerHTML =
+    changeCard(a, "Change A", "bg-sky-700") + changeCard(b, "Change B", "bg-fuchsia-700");
+}
+
+function stateTable(state, title, highlight) {
+  const highlighted = new Set((highlight || []).map((d) => `${d.resource_id}.${d.field}`));
+  const rows = Object.values(state.resources).map((r) => {
+    const fields = Object.entries(r.fields).map(([k, v]) => {
+      const hot = highlighted.has(`${r.id}.${k}`);
+      return `<div class="flex justify-between gap-3 px-2 py-0.5 rounded ${hot ? "bg-amber-200 font-semibold" : ""}">
+                <span class="mono text-xs text-slate-600">${esc(k)}</span>
+                <span class="mono text-xs">${esc(val(v))}</span>
+              </div>`;
+    }).join("");
+    return `<div class="border-t border-slate-100 pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
+              <div class="mono text-xs font-semibold">${esc(r.id)} <span class="text-slate-400">(${esc(r.type)})</span></div>
+              <div class="mt-1">${fields}</div>
+            </div>`;
+  }).join("");
+  return `<div class="bg-white rounded border border-slate-200 p-3">
+            <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">${title}</div>
+            ${rows}
+          </div>`;
+}
+
+function noStateNotice(why) {
+  return `<div class="rounded border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+            <span class="font-semibold text-slate-800">No state produced.</span> Nothing was applied &mdash; ${why}
+          </div>`;
+}
+
+function applyTrail(results, label) {
+  const rows = results.map((r) => {
+    const ok = r.outcome === "APPLIED";
+    return `<li class="text-xs">
+              <span class="mono ${ok ? "text-emerald-700" : "text-rose-700"} font-semibold">${esc(r.outcome)}</span>
+              <span class="mono text-slate-500"> ${esc(r.change_id)}</span>
+              <div class="text-slate-600 mt-0.5">${esc(r.explanation)}</div>
+            </li>`;
+  }).join("");
+  return `<div>
+            <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">${label}</div>
+            <ul class="space-y-2">${rows}</ul>
+          </div>`;
+}
+
+function renderResult() {
+  const r = current;
+  const badge = BADGES[r.outcome];
+
+  let body = "";
+  if (r.outcome === "MERGED") {
+    body = `
+      ${stateTable(r.final_state, "Accepted state")}
+      <p class="text-sm text-slate-700 mt-3">
+        Invariants checked and confirmed against the accepted state:
+        ${r.invariants_confirmed.map((n) => `<code class="mono text-xs bg-white border border-slate-300 rounded px-1 py-0.5">${esc(n)}</code>`).join(" ")}
+      </p>`;
+  } else if (r.outcome === "CONFLICT") {
+    const c = r.conflict;
+    body = c ? `
+      <div class="bg-white rounded border border-slate-200 p-3 mb-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Contested field</div>
+        <div class="mono text-sm font-semibold">${esc(c.resource_id)}.${esc(c.field)}</div>
+        <div class="grid sm:grid-cols-2 gap-2 mt-2">
+          <div class="border border-sky-300 bg-sky-50 rounded px-3 py-2">
+            <div class="text-xs text-slate-600">${esc(c.change_a_id)} &middot; ${esc(c.change_a_origin)}</div>
+            <div class="mono text-lg font-semibold">${esc(val(c.value_a))}</div>
+          </div>
+          <div class="border border-fuchsia-300 bg-fuchsia-50 rounded px-3 py-2">
+            <div class="text-xs text-slate-600">${esc(c.change_b_id)} &middot; ${esc(c.change_b_origin)}</div>
+            <div class="mono text-lg font-semibold">${esc(val(c.value_b))}</div>
+          </div>
+        </div>
+      </div>
+      ${noStateNotice("preserving one value would silently discard the other.")}` :
+      noStateNotice("no order applies both changes.");
+  } else if (r.outcome === "INVARIANT_REJECTED") {
+    const named = [...new Set(
+      [...r.order.results_ab, ...r.order.results_ba]
+        .flatMap((x) => x.invariants_checked.filter((i) => !i.passed))
+        .map((i) => `${i.name}|${i.reason}`))]
+      .map((s) => s.split("|"));
+    body = `
+      <div class="bg-white rounded border border-violet-300 p-3 mb-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Violated invariant</div>
+        ${named.map(([name, reason]) => `
+          <div class="mono text-sm font-semibold text-violet-800">${esc(name)}</div>
+          <div class="text-sm text-slate-700 mt-0.5">${esc(reason)}</div>`).join("")}
+        <p class="text-xs text-slate-600 mt-2">
+          No field is contested here &mdash; the two changes touch different resources. Each is valid alone;
+          only their combination breaks the rule.
+        </p>
+      </div>
+      <div class="grid gap-4 md:grid-cols-2 mb-3">
+        ${applyTrail(r.order.results_ab, "Apply A &rarr; B")}
+        ${applyTrail(r.order.results_ba, "Apply B &rarr; A")}
+      </div>
+      ${noStateNotice("neither change is at fault, so neither is discarded.")}`;
+  } else if (r.outcome === "ORDER_DEPENDENT") {
+    const o = r.order;
+    const showAB = orderView === "ab" || orderView === "both";
+    const showBA = orderView === "ba" || orderView === "both";
+    const btn = (key, text) => `<button data-order="${key}"
+        class="px-3 py-1.5 rounded border text-xs font-medium ${orderView === key
+          ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 hover:border-slate-500"}">${text}</button>`;
+    body = `
+      <div class="flex gap-2 mb-3">
+        ${btn("ab", "Apply A &rarr; B")}${btn("ba", "Apply B &rarr; A")}${btn("both", "Show both")}
+      </div>
+      <div class="grid gap-4 ${orderView === "both" ? "md:grid-cols-2" : ""} mb-3">
+        ${showAB ? `<div class="space-y-3">${stateTable(o.state_ab, "Result of A &rarr; B", o.diverging_fields)}${applyTrail(o.results_ab, "What happened")}</div>` : ""}
+        ${showBA ? `<div class="space-y-3">${stateTable(o.state_ba, "Result of B &rarr; A", o.diverging_fields)}${applyTrail(o.results_ba, "What happened")}</div>` : ""}
+      </div>
+      <div class="bg-white rounded border border-slate-200 p-3 mb-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Diverging fields</div>
+        ${o.diverging_fields.map((d) => `<div class="mono text-xs">${esc(d.resource_id)}.${esc(d.field)}:
+          A&rarr;B gives <span class="font-semibold">${esc(val(d.value_ab))}</span>,
+          B&rarr;A gives <span class="font-semibold">${esc(val(d.value_ba))}</span></div>`).join("")}
+      </div>
+      ${noStateNotice("neither order is privileged, so the engine does not pick one.")}`;
+  }
+
+  const commuteNote = r.commutes
+    ? `The two changes write <span class="font-semibold">disjoint fields</span> (commutes: yes)${
+        r.outcome === "ORDER_DEPENDENT"
+          ? " &mdash; and the order <em>still</em> changes the result, because a precondition reads what the other change writes."
+          : "."}`
+    : `The two changes write the <span class="font-semibold">same field</span> (commutes: no).`;
+
+  $("result").innerHTML = `
+    <div class="rounded-lg border ${badge.box} p-4">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="${badge.chip} text-white text-xs font-bold tracking-wider px-2.5 py-1 rounded">${badge.label}</span>
+        <span class="text-xs text-slate-600">${commuteNote}</span>
+      </div>
+      <p class="mono text-xs text-slate-800 mt-3 leading-relaxed whitespace-pre-line">${esc(r.explanation)}</p>
+      <div class="mt-4">${body}</div>
+    </div>`;
+
+  $("result").querySelectorAll("button[data-order]").forEach((b) =>
+    b.addEventListener("click", () => { orderView = b.dataset.order; renderResult(); }));
+}
+
+boot();
+</script>
+</body>
+</html>
