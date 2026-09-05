@@ -13,6 +13,114 @@ invariants rather than inventing a compromise. The final accepted state and any
 rejected change are explainable directly from the declarative model and
 automatically checked against its invariants.
 
+## Architecture
+
+Four layers, one direction of dependency. Nothing below the line knows the layer
+above it exists, so the engine is testable and the model is reusable.
+
+```mermaid
+flowchart TB
+    subgraph UI["UI · frontend/index.html"]
+        direction LR
+        PICK["scenario picker"] --> CARDS["change cards<br/>preconditions · postconditions"]
+        CARDS --> PANEL["verdict panel<br/>one shape per outcome"]
+        PANEL --> TOGGLE["order toggle<br/>A→B / B→A / both"]
+    end
+
+    subgraph API["API · api.py · FastAPI"]
+        direction LR
+        E1["GET /state"]
+        E2["GET /scenarios"]
+        E3["POST /scenarios/name/run"]
+        E4["POST /reset"]
+    end
+
+    subgraph FIX["Fixtures · scenarios.py"]
+        BASE["base_state<br/>db-primary · db-replica · sg-web"]
+        REG["SCENARIOS registry<br/>4 cases, 1 per outcome"]
+    end
+
+    subgraph ENG["Engine · engine.py"]
+        direction TB
+        REC["reconcile<br/>the single verdict"]
+        CC["conflict_check<br/>same field, different values"]
+        OC["order_check<br/>runs BOTH orders"]
+        SEQ["apply_sequence"]
+        AS["apply_single"]
+        DIFF["diff_states<br/>field-level divergence"]
+        REC --> CC
+        REC --> OC
+        OC --> SEQ --> AS
+        OC --> DIFF
+    end
+
+    subgraph MOD["Model · models.py + invariants.py"]
+        direction LR
+        RES["Resource<br/>id · type · fields"]
+        PRE["Precondition<br/>field op value"]
+        POST["Postcondition<br/>field = value"]
+        INV["Invariant<br/>predicate over WHOLE state"]
+    end
+
+    UI -->|"fetch JSON"| API
+    E2 --> REG
+    E3 --> REG
+    E1 --> BASE
+    E4 --> BASE
+    E3 -->|"initial_state, change_a, change_b"| REC
+    REC -->|"ReconciliationResult"| E3
+    REG --> BASE
+    AS --> PRE
+    AS --> POST
+    AS --> INV
+    INV --> RES
+```
+
+### How one apply is decided
+
+`apply_single` is the only place the state is ever written, and it writes to a
+**copy**. A rejected change leaves the caller's state byte-identical.
+
+```mermaid
+flowchart LR
+    IN(["change + state"]) --> R{"resource<br/>exists?"}
+    R -->|no| X1["NO_SUCH_RESOURCE"]
+    R -->|yes| P{"all preconditions<br/>hold?"}
+    P -->|no| X2["PRECONDITION_FAILED<br/>names the failing check<br/>and the actual value"]
+    P -->|yes| W["write ALL postconditions<br/>to a deep copy"]
+    W --> I{"every invariant<br/>still holds?"}
+    I -->|no| X3["INVARIANT_VIOLATED<br/>copy discarded whole<br/>never trimmed to fit"]
+    I -->|yes| OK(["APPLIED<br/>copy becomes the new state"])
+```
+
+### How the pair is classified
+
+Branch order is load-bearing. "No order applies both" is tested **before**
+"the orders diverge" — otherwise an unrealisable pair would be labelled
+`ORDER_DEPENDENT`, implying some order works when none does.
+
+```mermaid
+flowchart TD
+    START(["reconcile: change_a, change_b, one shared base state"]) --> C1{"1. Do both write the<br/>SAME field of the same<br/>resource, to different values?"}
+    C1 -->|yes| CONF["CONFLICT<br/>irresolvable without choosing a side<br/>also reports if a side is invalid alone"]
+    C1 -->|no| RUN["run both orders<br/>against separate copies"]
+    RUN --> C2{"2. Was something rejected<br/>in BOTH orders?"}
+    C2 -->|yes| C3{"were ALL the blockers<br/>invariant violations?"}
+    C3 -->|yes| IREJ["INVARIANT_REJECTED<br/>each is valid alone<br/>the combination is not<br/>neither change is at fault"]
+    C3 -->|no| CONF2["CONFLICT<br/>mutually invalidating preconditions"]
+    C2 -->|no| C4{"3. Do the two orders differ<br/>in state or in outcomes?"}
+    C4 -->|yes| ORD["ORDER_DEPENDENT<br/>both candidate states returned<br/>no order is chosen"]
+    C4 -->|no| MERG["MERGED<br/>both intents preserved<br/>final_state + invariants_confirmed"]
+
+    CONF --> NONE["final_state = None"]
+    CONF2 --> NONE
+    IREJ --> NONE
+    ORD --> NONE
+```
+
+Only `MERGED` yields a state. For the other three the absence of a state **is**
+the answer — the system never invents a compromise.
+
 ## Running it
 
 ```
