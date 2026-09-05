@@ -189,6 +189,27 @@ def test_two_operators_are_two_sessions():
     assert {i.login for i in registry.signed_in} == {"atith-c", "atithc22-svg"}
 
 
+def test_one_person_with_two_sessions_is_listed_once():
+    """Found by signing in twice from an incognito window: two tabs, one operator."""
+    registry = SessionRegistry()
+    registry.sign_in(Identity(login="atithc22-svg"), "tok-1")
+    registry.sign_in(Identity(login="atithc22-svg"), "tok-2")
+    registry.sign_in(Identity(login="atith-c"), "tok-3")
+
+    assert sorted(i.login for i in registry.signed_in) == ["atith-c", "atithc22-svg"]
+
+
+def test_signing_out_one_tab_leaves_the_person_signed_in_on_the_other():
+    registry = SessionRegistry()
+    first = registry.sign_in(Identity(login="atithc22-svg"), "tok-1")
+    second = registry.sign_in(Identity(login="atithc22-svg"), "tok-2")
+
+    registry.sign_out(first.session_id)
+
+    assert registry.principal(second.session_id) is not None
+    assert [i.login for i in registry.signed_in] == ["atithc22-svg"]
+
+
 def test_an_unknown_session_id_is_nobody():
     assert SessionRegistry().principal("made-up") is None
     assert SessionRegistry().principal(None) is None

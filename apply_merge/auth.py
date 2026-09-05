@@ -179,8 +179,15 @@ class SessionRegistry:
 
     @property
     def signed_in(self) -> list[Identity]:
-        """Everyone currently signed in, for the 'other operators' panel."""
-        return list(self._identities.values())
+        """Everyone currently signed in, one entry per person.
+
+        Deduplicated by login: someone with two tabs, or who signed in again without
+        signing out, holds two sessions but is still one operator.
+        """
+        unique: dict[str, Identity] = {}
+        for identity in self._identities.values():
+            unique.setdefault(identity.login, identity)
+        return list(unique.values())
 
 
 def auth_from_env() -> GitHubAuth | None:
