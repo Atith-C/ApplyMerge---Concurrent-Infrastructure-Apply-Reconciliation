@@ -41,6 +41,10 @@ class StaleWrite(GitHubError):
     """Someone else wrote this file first. GitHub's own optimistic lock, firing."""
 
 
+class RateLimited(GitHubError):
+    """Too many requests. Unauthenticated reads get 60 an hour; a token gets 5,000."""
+
+
 class Transport(Protocol):
     """One HTTP call. The seam that keeps the test suite offline."""
 
@@ -232,6 +236,11 @@ class GitHub:
         if 200 <= status < 300:
             return body
         detail = body.get("message", "") if isinstance(body, dict) else ""
+        if "rate limit" in detail.lower():
+            raise RateLimited(
+                f"{detail} Set APPLYMERGE_TOKEN in .env to a token with read access "
+                f"to this repo — authenticated requests get 5,000 an hour instead of 60."
+            )
         if status in (401, 403):
             raise AuthError(f"GitHub refused the token ({status}): {detail}")
         if status == 404:

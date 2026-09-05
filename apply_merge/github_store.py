@@ -74,9 +74,18 @@ class GitHubStore:
         self.token = token
         self._chain: list[CommitInfo] = []
         self._states: dict[str, InfraState] = {}
-        self.refresh()
 
     # --- the chain ----------------------------------------------------------
+
+    def _ensure(self) -> None:
+        """Read the chain on first use, not at construction.
+
+        Reaching for the network while the module is being imported means a rate
+        limit or a flaky connection takes the whole server down before it starts.
+        Deferring it turns that into one failed request with a readable message.
+        """
+        if not self._chain:
+            self.refresh()
 
     def refresh(self) -> None:
         """Re-read the commit history of the state file, oldest first."""
@@ -94,8 +103,11 @@ class GitHubStore:
         Deliberately *not* a rewind. Rewriting a real repository's history to reset a
         demo would be a destructive act dressed up as a convenience, so this re-reads
         instead. `state` is ignored: the repo decides what is live, not the caller.
+
+        Forgetting the chain rather than re-reading it here keeps construction free
+        of network calls — `World.__init__` resets, and that must not need GitHub.
         """
-        self.refresh()
+        self._chain = []
 
     def ref(self, version: int) -> str:
         """The commit sha for a version — the version's real identity."""
@@ -110,6 +122,7 @@ class GitHubStore:
         return commit.author_login or commit.author_name
 
     def _commit(self, version: int) -> CommitInfo:
+        self._ensure()
         try:
             return self._chain[version]
         except IndexError:
@@ -120,6 +133,7 @@ class GitHubStore:
     # --- the StateStore interface -------------------------------------------
 
     def head(self) -> tuple[int, InfraState]:
+        self._ensure()
         version = len(self._chain) - 1
         return version, self.read(version)
 
@@ -132,6 +146,7 @@ class GitHubStore:
 
     def changes_since(self, version: int) -> list[Change]:
         """Every change committed after `version` — what a stale session overlapped with."""
+        self._ensure()
         return [
             self._commit_change(index)
             for index in range(version + 1, len(self._chain))
@@ -151,6 +166,7 @@ class GitHubStore:
                 f"{author} has no GitHub token, so the commit would have no author. "
                 f"Sign in before applying."
             )
+        self._ensure()
         self.token = self.token or token
         head_file = self.github.read_file(self.path, self.token)
         self.github.write_file(

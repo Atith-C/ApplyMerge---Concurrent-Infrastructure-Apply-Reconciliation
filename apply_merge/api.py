@@ -1,7 +1,7 @@
 """FastAPI endpoints exposing the engine and demo scenarios."""
 
-from fastapi import Cookie, FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import Cookie, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ from apply_merge.auth import (
     sessions,
 )
 from apply_merge.engine import InfraState, ReconciliationResult, reconcile
+from apply_merge.github import GitHubError
 from apply_merge.github_store import StoreError
 from apply_merge.models import Change
 from apply_merge.scenarios import SCENARIOS, base_state
@@ -33,6 +34,16 @@ app = FastAPI(
 # can be run in any order, repeatedly, and still agree.
 
 FRONTEND = Path(__file__).parent / "frontend"
+
+
+@app.exception_handler(GitHubError)
+def github_unavailable(request: Request, failure: GitHubError) -> JSONResponse:
+    """GitHub being unreachable is a 503 with a readable reason, not a stack trace.
+
+    Rate limits, network trouble and expired tokens all land here. The console shows
+    the message, and switching APPLYMERGE_BACKEND to memory keeps the demo alive.
+    """
+    return JSONResponse(status_code=503, content={"detail": str(failure)})
 
 
 class ScenarioSummary(BaseModel):

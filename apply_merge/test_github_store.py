@@ -26,6 +26,7 @@ class FakeGitHub:
         self.commits = []   # newest first, like GitHub returns them
         self.blobs = {}     # sha -> text
         self.written = []   # (message, token) for every write
+        self.calls = 0      # every request, so "no network at construction" is testable
 
     def seed(self, text, sha="c0", login="atith-c", message="The world at version zero"):
         self.blobs[sha] = text
@@ -39,10 +40,12 @@ class FakeGitHub:
 
     # the three calls GitHubStore uses
     def list_commits(self, path, token, limit=100):
+        self.calls += 1
         return [GitHub._commit_info(item) for item in self.commits]
 
     def read_file(self, path, token, ref=None):
         from apply_merge.github import RemoteFile
+        self.calls += 1
         sha = ref or self.commits[0]["sha"]
         return RemoteFile(text=self.blobs[sha], blob_sha=sha)
 
@@ -125,10 +128,24 @@ def test_version_zero_is_the_commit_that_created_the_file():
     assert store.head()[1].resources["db-primary"].fields["replicas"] == 3
 
 
-def test_a_repo_with_no_state_file_is_refused_with_an_explanation():
+def test_constructing_the_store_touches_no_network():
+    """Construction happens at import: a rate limit here would kill the server before
+    it started, instead of being one failed request with a readable message."""
     github = FakeGitHub()
+    github.seed(dumps(base_state()))
+
+    store = GitHubStore(github)
+
+    assert github.calls == 0
+    store.head()
+    assert github.calls > 0          # read on first use, not before
+
+
+def test_a_repo_with_no_state_file_is_refused_with_an_explanation():
+    store = GitHubStore(FakeGitHub())
+
     with pytest.raises(StoreError) as raised:
-        GitHubStore(github)
+        store.head()                 # discovered at first use, since nothing is eager
     assert "Create it on the default branch" in str(raised.value)
 
 

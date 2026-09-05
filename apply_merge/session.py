@@ -145,8 +145,12 @@ class World:
     """
 
     def __init__(self, store: StateStore | None = None) -> None:
+        # Deliberately does not touch the store: a store backed by a repository
+        # would have to reach the network here, and construction happens at import.
+        # Both stores arrive already initialised.
         self.store: StateStore = store if store is not None else MemoryStore()
-        self.reset()
+        self.sessions: dict[str, Session] = {}
+        self.history: list[HistoryEntry] = []
 
     def reset(self, state: InfraState | None = None) -> InfraState:
         """Rewind to version 0. Drops every session, snapshot and history line."""
@@ -231,7 +235,9 @@ def build_world() -> World:
             raise RuntimeError(
                 "APPLYMERGE_BACKEND=github needs APPLYMERGE_REPO set to owner/name."
             )
-        return World(GitHubStore(GitHub(repo)))
+        # A read token is optional but strongly wanted: unauthenticated reads are
+        # capped at 60 an hour per IP, which one demo will exhaust.
+        return World(GitHubStore(GitHub(repo), token=os.environ.get("APPLYMERGE_TOKEN", "").strip()))
     raise RuntimeError(
         f"APPLYMERGE_BACKEND={backend!r} is not a backend. Use 'memory' or 'github'."
     )
