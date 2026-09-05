@@ -1,10 +1,18 @@
 """FastAPI endpoints exposing the engine and demo scenarios."""
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Cookie, FastAPI, HTTPException, Response
+from fastapi.responses import FileResponse, RedirectResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
 
+from apply_merge.auth import (
+    SESSION_COOKIE,
+    Identity,
+    Principal,
+    SignInError,
+    auth_from_env,
+    sessions,
+)
 from apply_merge.engine import InfraState, ReconciliationResult, reconcile
 from apply_merge.models import Change
 from apply_merge.scenarios import SCENARIOS, base_state
@@ -95,6 +103,109 @@ def open_session(request: OpenSessionRequest) -> SessionView:
         live_version=world.version,
         state=world.snapshot(session.base_version),
     )
+
+
+# --- signing in with GitHub -------------------------------------------------
+
+auth = auth_from_env()
+
+
+class WhoAmI(BaseModel):
+    """The signed-in operator, and everyone else currently here."""
+
+    identity: Identity
+    others: list[Identity] = Field(default_factory=list)
+
+
+def _auth():
+    """The configured sign-in, or a 503 explaining exactly what is missing."""
+    if auth is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "GitHub sign-in is not configured. Set GITHUB_CLIENT_ID and "
+                "GITHUB_CLIENT_SECRET in .env and restart. Memory mode works without it."
+            ),
+        )
+    return auth
+
+
+@app.get("/auth/login", include_in_schema=False)
+def login() -> RedirectResponse:
+    """Send the browser to GitHub, carrying a one-time CSRF state we will demand back."""
+    return RedirectResponse(_auth().authorize_url(sessions.issue_state()), status_code=307)
+
+
+@app.get("/auth/callback", include_in_schema=False)
+def callback(
+    response: Response, code: str | None = None, state: str | None = None,
+    error: str | None = None, error_description: str | None = None,
+) -> RedirectResponse:
+    """Take the code back from GitHub, turn it into a session, and go to the console.
+
+    The token is stored server-side against the session id; the cookie is opaque.
+    """
+    if error:
+        raise HTTPException(status_code=400, detail=f"GitHub declined: {error_description or error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="That callback carried no code.")
+    if not sessions.consume_state(state):
+        # Unknown, expired, or already used: all mean this callback is not ours.
+        raise HTTPException(
+            status_code=400,
+            detail="That sign-in did not start here, or it took too long. Try again.",
+        )
+
+    flow = _auth()
+    try:
+        principal = sessions.sign_in(*_identify(flow, code))
+    except SignInError as failure:
+        raise HTTPException(status_code=400, detail=str(failure)) from None
+
+    redirect = RedirectResponse("/", status_code=303)
+    redirect.set_cookie(
+        SESSION_COOKIE,
+        principal.session_id,
+        httponly=True,   # script on the page can never read it
+        samesite="lax",  # survives the redirect back from github.com
+        # `secure` stays off because the demo runs on http://localhost. Turn it on
+        # the moment this is served over https.
+    )
+    return redirect
+
+
+def _identify(flow, code: str) -> tuple[Identity, str]:
+    token = flow.exchange(code)
+    return flow.identity(token), token
+
+
+@app.get("/me", response_model=WhoAmI)
+def me(applymerge_session: str | None = Cookie(default=None)) -> WhoAmI:
+    """Who this browser is signed in as, and who else is here."""
+    principal = sessions.principal(applymerge_session)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    return WhoAmI(
+        identity=principal.identity,
+        others=[i for i in sessions.signed_in if i.login != principal.identity.login],
+    )
+
+
+@app.post("/auth/logout", include_in_schema=False)
+def logout(applymerge_session: str | None = Cookie(default=None)) -> Response:
+    """Forget the session and the token with it."""
+    sessions.sign_out(applymerge_session)
+    response = Response(status_code=204)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
+
+
+def _principal(session_id: str | None) -> Principal:
+    """The signed-in operator, or a 401. For endpoints that will need a token."""
+    principal = sessions.principal(session_id)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Sign in with GitHub first.")
+    return principal
 
 
 def _session(session_id: str) -> Session:

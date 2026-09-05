@@ -45,30 +45,43 @@ class Transport(Protocol):
     """One HTTP call. The seam that keeps the test suite offline."""
 
     def request(
-        self, method: str, url: str, token: str, payload: dict[str, Any] | None = None
+        self,
+        method: str,
+        url: str,
+        token: str,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> tuple[int, Any]:
         """Returns (status code, decoded JSON body)."""
 
 
 class HttpTransport:
-    """The real one."""
+    """The real one.
+
+    An empty token sends no Authorization header at all, which is what the OAuth
+    token exchange needs — you cannot authenticate the call that gets you the token.
+    """
 
     def __init__(self, timeout: float = 10.0) -> None:
         self.timeout = timeout
 
     def request(
-        self, method: str, url: str, token: str, payload: dict[str, Any] | None = None
+        self,
+        method: str,
+        url: str,
+        token: str,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> tuple[int, Any]:
+        sent = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if token:
+            sent["Authorization"] = f"Bearer {token}"
+        sent.update(headers or {})
         response = httpx.request(
-            method,
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            json=payload,
-            timeout=self.timeout,
+            method, url, headers=sent, json=payload, timeout=self.timeout
         )
         try:
             return response.status_code, response.json()
