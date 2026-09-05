@@ -14,6 +14,7 @@ from apply_merge.auth import (
     sessions,
 )
 from apply_merge.engine import InfraState, ReconciliationResult, reconcile
+from apply_merge.github_store import StoreError
 from apply_merge.models import Change
 from apply_merge.scenarios import SCENARIOS, base_state
 from apply_merge.session import Edit, EditError, HistoryEntry, Session, Submission, submit, world
@@ -71,6 +72,10 @@ class LiveView(BaseModel):
     state: InfraState
     history: list[HistoryEntry]
     sessions: list[str]
+    # `v3` in memory, a commit sha when the state lives in a repository.
+    ref: str = ""
+    repo: str = ""
+    commit_url: str = ""
 
 
 def _load(name: str):
@@ -235,17 +240,31 @@ def get_session(session_id: str) -> SessionView:
 
 
 @app.post("/session/{session_id}/submit", response_model=Submission)
-def submit_edit(session_id: str, edit: Edit) -> Submission:
+def submit_edit(
+    session_id: str, edit: Edit, applymerge_session: str | None = Cookie(default=None)
+) -> Submission:
     """Submit an edited manifest. The diff against the session's snapshot is the change.
 
     Applied outright if nothing landed while this session was working; reconciled
     against whatever did, if something had.
+
+    When the state lives in a repository the operator's **own** GitHub token does the
+    writing, so the commit is authored by the person who made the change rather than
+    by whoever started the server.
     """
     session = _session(session_id)
     try:
-        return submit(world, session, edit)
+        return submit(world, session, edit, _operator_token(applymerge_session))
     except EditError as error:
         raise HTTPException(status_code=400, detail=str(error)) from None
+    except StoreError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+def _operator_token(session_id: str | None) -> str:
+    """The signed-in operator's token, or empty in memory mode where none is needed."""
+    principal = sessions.principal(session_id)
+    return sessions.token(principal.session_id) if principal else ""
 
 
 @app.post("/session/{session_id}/refresh", response_model=SessionView)
@@ -265,11 +284,15 @@ def refresh_session(session_id: str) -> SessionView:
 @app.get("/live", response_model=LiveView)
 def get_live() -> LiveView:
     """The live state, its version, who is connected, and what has happened so far."""
+    store = world.store
     return LiveView(
         version=world.version,
         state=world.state,
         history=world.history,
         sessions=[s.name for s in world.sessions.values()],
+        ref=world.ref(world.version),
+        repo=getattr(getattr(store, "github", None), "repo", ""),
+        commit_url=store.url(world.version) if hasattr(store, "url") else "",
     )
 
 

@@ -22,6 +22,8 @@ from apply_merge.engine import (
     apply_single,
     reconcile,
 )
+from apply_merge.github import GitHub, commit_message
+from apply_merge.github_store import GitHubStore
 from apply_merge.models import Change, Postcondition, Precondition
 from apply_merge.scenarios import base_state
 
@@ -63,11 +65,26 @@ class StateStore(Protocol):
     def changes_since(self, version: int) -> list[Change]:
         """Every change committed after `version`, oldest first."""
 
-    def append(self, state: InfraState, change: Change, author: str) -> int:
-        """Record `state` as the next version, attributed to `change`."""
+    def append(
+        self,
+        state: InfraState,
+        change: Change,
+        author: str,
+        token: str = "",
+        message: str = "",
+    ) -> int:
+        """Record `state` as the next version, attributed to `change`.
+
+        `token` and `message` are for a store that writes to somewhere real: the
+        operator's own credential, so the commit is authored by them, and the text
+        that will stand as the commit message.
+        """
 
     def prune(self, floor: int) -> None:
         """Forget versions below `floor`. A store that cannot forget may ignore this."""
+
+    def ref(self, version: int) -> str:
+        """A version's identity as the store names it — a sequence number, or a sha."""
 
 
 class MemoryStore:
@@ -95,7 +112,14 @@ class MemoryStore:
     def changes_since(self, version: int) -> list[Change]:
         return [self.committed[v] for v in range(version + 1, self.version + 1)]
 
-    def append(self, state: InfraState, change: Change, author: str) -> int:
+    def append(
+        self,
+        state: InfraState,
+        change: Change,
+        author: str,
+        token: str = "",
+        message: str = "",
+    ) -> int:
         self.version += 1
         self._head = state
         self.snapshots[self.version] = state.copy_state()
@@ -106,6 +130,9 @@ class MemoryStore:
         for version in [v for v in self.snapshots if v < floor]:
             del self.snapshots[version]
             self.committed.pop(version, None)
+
+    def ref(self, version: int) -> str:
+        return f"v{version}"
 
 
 class World:
@@ -150,12 +177,24 @@ class World:
         """Every change committed after `version`. What a stale session overlapped with."""
         return self.store.changes_since(version)
 
-    def commit(self, state: InfraState, change: Change, origin: str, summary: str) -> int:
+    def commit(
+        self,
+        state: InfraState,
+        change: Change,
+        origin: str,
+        summary: str,
+        token: str = "",
+        message: str = "",
+    ) -> int:
         """Make `state` live, attributing it to `change`. Returns the new version."""
-        version = self.store.append(state, change, origin)
+        version = self.store.append(state, change, origin, token, message)
         self.log(origin, "APPLIED", summary)
         self.store.prune(self._floor())
         return version
+
+    def ref(self, version: int) -> str:
+        """How the store names that version: `v3` in memory, a commit sha in git."""
+        return self.store.ref(version)
 
     def log(self, origin: str, outcome: str, summary: str) -> HistoryEntry:
         """Record what happened, at the version live at the time."""
@@ -186,8 +225,15 @@ def build_world() -> World:
     backend = os.environ.get("APPLYMERGE_BACKEND", "memory").strip().lower()
     if backend == "memory":
         return World(MemoryStore())
+    if backend == "github":
+        repo = os.environ.get("APPLYMERGE_REPO", "").strip()
+        if not repo:
+            raise RuntimeError(
+                "APPLYMERGE_BACKEND=github needs APPLYMERGE_REPO set to owner/name."
+            )
+        return World(GitHubStore(GitHub(repo)))
     raise RuntimeError(
-        f"APPLYMERGE_BACKEND={backend!r} is not available yet. Only 'memory' is."
+        f"APPLYMERGE_BACKEND={backend!r} is not a backend. Use 'memory' or 'github'."
     )
 
 
@@ -347,7 +393,14 @@ class Submission(BaseModel):
     state: InfraState
 
 
-def _land(world: World, session: Session, change: Change, note: str) -> tuple[ApplyResult, bool]:
+def _land(
+    world: World,
+    session: Session,
+    change: Change,
+    note: str,
+    token: str = "",
+    overlapped: list[Change] | None = None,
+) -> tuple[ApplyResult, bool]:
     """Apply a change to the live state, committing it if it holds up.
 
     The change is re-checked against reality, not against the snapshot it was written
@@ -355,14 +408,21 @@ def _land(world: World, session: Session, change: Change, note: str) -> tuple[Ap
     """
     new_state, result = apply_single(world.state, change)
     if result.applied:
-        world.commit(new_state, change, session.name, change.description)
+        message = commit_message(
+            change,
+            [i.name for i in result.invariants_checked],
+            [c.id for c in overlapped or []],
+        )
+        world.commit(
+            new_state, change, session.name, change.description, token, message
+        )
         session.base_version = world.version
         return result, True
     world.log(session.name, result.outcome, f"{note}{result.explanation}")
     return result, False
 
 
-def submit(world: World, session: Session, edit: Edit) -> Submission:
+def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submission:
     """Turn a session's edit into a change and decide what happens to it.
 
     Two paths. If the session's base is still live, nothing overlapped and the change
@@ -376,7 +436,7 @@ def submit(world: World, session: Session, edit: Edit) -> Submission:
     missed = world.changes_since(base)
 
     if not missed:
-        result, committed = _land(world, session, change, "")
+        result, committed = _land(world, session, change, "", token)
         return Submission(
             name=session.name,
             base_version=base,
@@ -419,7 +479,7 @@ def submit(world: World, session: Session, edit: Edit) -> Submission:
                 state=world.state,
             )
 
-    result, committed = _land(world, session, change, f"{overlap} ")
+    result, committed = _land(world, session, change, f"{overlap} ", token, missed)
     return Submission(
         name=session.name,
         base_version=base,
