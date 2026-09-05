@@ -11,277 +11,686 @@
   </style>
 </head>
 <body class="bg-slate-100 text-slate-900">
-<div class="max-w-6xl mx-auto px-6 py-8">
+<div class="max-w-[110rem] mx-auto px-6 py-8">
 
   <header class="mb-6">
     <h1 class="text-2xl font-semibold tracking-tight">ApplyMerge</h1>
     <p class="text-sm text-slate-600 mt-1 max-w-3xl">
-      Two operators change the same infrastructure at the same time. Every change declares its
-      preconditions and postconditions; the state declares invariants. The engine decides whether
-      both intents survive &mdash; and refuses, with a reason, when they cannot.
+      Two operators edit the same infrastructure at the same time. What each one changes becomes a
+      declarative change &mdash; postconditions from what moved, preconditions from what they were
+      looking at when they decided. Whoever applies second is reconciled against whoever applied
+      first, rather than simply overwriting them.
     </p>
   </header>
 
-  <!-- Declared invariants -->
-  <section class="mb-6 bg-white rounded-lg border border-slate-200 p-4">
-    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Declared invariants</h2>
-    <div id="invariants" class="grid gap-2 sm:grid-cols-2 text-sm"></div>
+  <!-- Who is at each console -->
+  <section id="setup" class="mb-6 bg-white rounded-lg border border-slate-200 p-4">
+    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Open two consoles</h2>
+    <div class="flex gap-3 flex-wrap items-end">
+      <label class="text-xs text-slate-600">
+        Left operator
+        <input id="name-0" autocomplete="off"
+               class="block mt-1 w-48 border border-slate-300 rounded px-3 py-2 text-sm">
+      </label>
+      <label class="text-xs text-slate-600">
+        Right operator
+        <input id="name-1" autocomplete="off"
+               class="block mt-1 w-48 border border-slate-300 rounded px-3 py-2 text-sm">
+      </label>
+      <button id="open" class="bg-slate-900 text-white rounded px-4 py-2 text-sm font-medium">Open</button>
+      <p id="setup-error" class="text-xs text-rose-600 self-center"></p>
+    </div>
   </section>
 
-  <!-- Scenario picker -->
-  <section class="mb-6">
-    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Scenarios</h2>
-    <div id="picker" class="flex flex-wrap gap-2"></div>
-    <p id="scenario-description" class="text-sm text-slate-600 mt-3"></p>
+  <!-- Staging and the shared world -->
+  <section id="world" class="mb-6 hidden">
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+      <div class="flex items-baseline justify-between gap-3 flex-wrap">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Stage a scenario</h2>
+        <button id="reset" class="text-xs border border-slate-300 rounded px-2 py-1">Reset world</button>
+      </div>
+      <div id="presets" class="flex flex-wrap gap-2 mt-2"></div>
+      <p id="preset-hint" class="text-xs text-slate-600 mt-2"></p>
+
+      <div class="grid gap-4 md:grid-cols-3 mt-4 pt-4 border-t border-slate-100">
+        <div class="md:col-span-1">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+            Live state <span id="live-version" class="mono normal-case text-slate-400"></span>
+          </div>
+          <div id="live-state"></div>
+        </div>
+        <div class="md:col-span-1">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Declared invariants</div>
+          <div id="invariants" class="space-y-2"></div>
+        </div>
+        <div class="md:col-span-1">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">History</div>
+          <div id="history" class="space-y-1"></div>
+        </div>
+      </div>
+    </div>
   </section>
 
-  <!-- The two concurrent changes -->
-  <section id="changes" class="grid gap-4 md:grid-cols-2 mb-6"></section>
-
-  <!-- Result -->
-  <section id="result"></section>
+  <!-- The two consoles -->
+  <section id="consoles" class="grid gap-4 xl:grid-cols-2"></section>
 
   <footer class="mt-10 text-xs text-slate-500">
-    Backed by <a class="underline" href="/docs">/docs</a> &middot; every verdict below is produced by
-    <code>reconcile()</code> and checked against the declared invariants.
+    <a class="underline" href="/docs">/docs</a> &middot;
+    <a class="underline" href="/scenarios-view">canned scenario walkthrough</a> &middot;
+    every verdict is produced by <code>reconcile()</code> and checked against the declared invariants.
   </footer>
 </div>
 
 <script>
 const BADGES = {
-  MERGED:             { label: "MERGED",             box: "bg-emerald-50 border-emerald-300", chip: "bg-emerald-600" },
-  CONFLICT:           { label: "CONFLICT",           box: "bg-rose-50 border-rose-300",       chip: "bg-rose-600" },
-  ORDER_DEPENDENT:    { label: "ORDER-DEPENDENT",    box: "bg-amber-50 border-amber-300",     chip: "bg-amber-600" },
-  INVARIANT_REJECTED: { label: "INVARIANT-REJECTED", box: "bg-violet-50 border-violet-300",   chip: "bg-violet-600" },
+  APPLIED:             { label: "APPLIED",             box: "bg-emerald-50 border-emerald-300", chip: "bg-emerald-600" },
+  MERGED:              { label: "MERGED",              box: "bg-emerald-50 border-emerald-300", chip: "bg-emerald-600" },
+  CONFLICT:            { label: "CONFLICT",            box: "bg-rose-50 border-rose-300",       chip: "bg-rose-600" },
+  ORDER_DEPENDENT:     { label: "ORDER-DEPENDENT",     box: "bg-amber-50 border-amber-300",     chip: "bg-amber-600" },
+  INVARIANT_REJECTED:  { label: "INVARIANT-REJECTED",  box: "bg-violet-50 border-violet-300",   chip: "bg-violet-600" },
+  INVARIANT_VIOLATED:  { label: "INVARIANT-VIOLATED",  box: "bg-violet-50 border-violet-300",   chip: "bg-violet-600" },
+  PRECONDITION_FAILED: { label: "PRECONDITION-FAILED", box: "bg-rose-50 border-rose-300",       chip: "bg-rose-600" },
+  NO_SUCH_RESOURCE:    { label: "NO-SUCH-RESOURCE",    box: "bg-slate-50 border-slate-300",     chip: "bg-slate-600" },
 };
 
-let scenarios = [];
-let current = null;      // the ReconciliationResult being displayed
-let orderView = "both";  // "ab" | "ba" | "both"
+// Each preset stages one outcome. `first` is applied before `second`, which is the
+// one that ends up reconciling against it — order matters for ORDER_DEPENDENT.
+const PRESETS = {
+  "safe merge": {
+    outcome: "MERGED",
+    hint: "Different fields of the same security group. Apply left, then right: both intents survive.",
+    edits: [{ "sg-web": { owner: "platform-team" } }, { "sg-web": { port: 8443 } }],
+    locks: [[], []],
+  },
+  "conflict": {
+    outcome: "CONFLICT",
+    hint: "Both resize the same database, to different sizes. Apply left, then right.",
+    edits: [{ "db-primary": { replicas: 5 } }, { "db-primary": { replicas: 8 } }],
+    locks: [[], []],
+  },
+  "order dependent": {
+    outcome: "ORDER_DEPENDENT",
+    hint: "Left takes the database down. Right promotes it, but only while it is serving — note the 🔒 on status. Apply left, then right.",
+    edits: [{ "db-primary": { status: "maintenance" } }, { "db-primary": { tier: "gold" } }],
+    locks: [[], ["db-primary.status"]],
+  },
+  "invariant rejected": {
+    outcome: "INVARIANT_REJECTED",
+    hint: "Different databases, nothing contested. 5 + 6 replicas breaks the fleet cap of 10. Apply left, then right.",
+    edits: [{ "db-primary": { replicas: 5 } }, { "db-replica": { replicas: 6 } }],
+    locks: [[], []],
+  },
+};
+
+const panels = [null, null];   // one per console, see makePanel
+let names = ["", ""];
 
 const $ = (id) => document.getElementById(id);
 const val = (v) => JSON.stringify(v);
-const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const same = (a, b) => String(a) === String(b);
 
-async function boot() {
-  const [state, list] = await Promise.all([
-    fetch("/state").then((r) => r.json()),
-    fetch("/scenarios").then((r) => r.json()),
-  ]);
-  scenarios = list;
-  renderInvariants(state.invariants);
-  renderPicker();
-  select(scenarios[0].name);
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.detail || response.statusText);
+  return body;
 }
 
-function renderInvariants(invariants) {
-  $("invariants").innerHTML = invariants.map((inv) => `
-    <div class="border border-slate-200 rounded px-3 py-2" data-invariant="${esc(inv.name)}">
+const post = (path, payload) => api(path, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: payload === undefined ? undefined : JSON.stringify(payload),
+});
+
+// --- opening the consoles --------------------------------------------------
+
+function makePanel(index, view) {
+  return {
+    index,
+    session: view,          // { session_id, name, base_version, live_version }
+    base: view.state,       // the snapshot this console is editing
+    draft: {},              // resource_id -> field -> value
+    locks: new Set(),       // "resource_id.field"
+    last: null,             // the Submission being shown
+    orderView: "both",
+    why: "",
+  };
+}
+
+async function openConsoles() {
+  names = [$("name-0").value.trim(), $("name-1").value.trim()];
+  if (!names[0] || !names[1]) {
+    $("setup-error").textContent = "Both consoles need a name.";
+    return;
+  }
+  if (names[0] === names[1]) {
+    $("setup-error").textContent = "Give them different names so the verdicts read clearly.";
+    return;
+  }
+  $("setup-error").textContent = "";
+  for (const index of [0, 1]) {
+    panels[index] = makePanel(index, await post("/session", { name: names[index] }));
+  }
+  sessionStorage.setItem("applymerge", JSON.stringify({
+    names, ids: panels.map((p) => p.session.session_id),
+  }));
+  $("world").classList.remove("hidden");
+  renderPresets();
+  renderAll();
+}
+
+async function boot() {
+  renderPresets();
+  const saved = sessionStorage.getItem("applymerge");
+  if (!saved) return;
+  try {
+    const { names: savedNames, ids } = JSON.parse(saved);
+    names = savedNames;
+    for (const index of [0, 1]) {
+      panels[index] = makePanel(index, await api(`/session/${ids[index]}`));
+    }
+    $("name-0").value = names[0];
+    $("name-1").value = names[1];
+    $("world").classList.remove("hidden");
+    renderAll();
+  } catch {
+    sessionStorage.removeItem("applymerge");  // a reset dropped those sessions
+  }
+}
+
+async function resetWorld() {
+  await post("/reset", {});
+  for (const index of [0, 1]) {
+    panels[index] = makePanel(index, await post("/session", { name: names[index] }));
+  }
+  sessionStorage.setItem("applymerge", JSON.stringify({
+    names, ids: panels.map((p) => p.session.session_id),
+  }));
+  renderAll();
+}
+
+async function stage(key) {
+  const preset = PRESETS[key];
+  await resetWorld();
+  panels.forEach((panel, index) => {
+    panel.draft = JSON.parse(JSON.stringify(preset.edits[index]));
+    panel.locks = new Set(preset.locks[index]);
+    panel.why = `${key} demo`;
+  });
+  $("preset-hint").innerHTML =
+    `<span class="font-semibold">${esc(key)}</span> &rarr; expect
+     <span class="mono">${esc(preset.outcome)}</span>. ${esc(preset.hint)}`;
+  renderAll();
+}
+
+// --- shared world ----------------------------------------------------------
+
+function renderPresets() {
+  $("presets").innerHTML = Object.keys(PRESETS).map((key) => `
+    <button data-preset="${esc(key)}"
+            class="px-3 py-2 rounded border text-sm font-medium bg-white border-slate-300 hover:border-slate-500">
+      ${esc(key)}
+    </button>`).join("");
+  $("presets").querySelectorAll("button").forEach((button) =>
+    button.addEventListener("click", () => stage(button.dataset.preset)));
+}
+
+async function renderWorld() {
+  const live = await api("/live");
+  $("live-version").textContent = `v${live.version}`;
+  $("live-state").innerHTML = stateTable(live.state, "", []);
+  $("invariants").innerHTML = live.state.invariants.map((inv) => `
+    <div class="border border-slate-200 rounded px-3 py-2">
       <div class="mono text-xs font-semibold text-slate-800">${esc(inv.name)}</div>
       <div class="text-slate-600 text-xs mt-0.5">${esc(inv.description)}</div>
     </div>`).join("");
+  $("history").innerHTML = live.history.length
+    ? live.history.map((h) => `
+        <div class="text-xs">
+          <span class="mono text-slate-400">v${h.version}</span>
+          <span class="font-semibold">${esc(h.origin)}</span>
+          <span class="mono ${h.outcome === "APPLIED" ? "text-emerald-700" : "text-rose-700"}">${esc(h.outcome)}</span>
+        </div>`).join("")
+    : `<p class="text-xs text-slate-400">nothing yet</p>`;
+
+  // Everyone else's view of how current they are.
+  panels.forEach((panel) => { if (panel) panel.session.live_version = live.version; });
 }
 
-function renderPicker() {
-  $("picker").innerHTML = scenarios.map((s) => `
-    <button data-scenario="${esc(s.name)}"
-            class="px-3 py-2 rounded border text-sm font-medium bg-white border-slate-300 hover:border-slate-500">
-      ${esc(s.name.replace(/_/g, " "))}
-    </button>`).join("");
-  $("picker").querySelectorAll("button").forEach((b) =>
-    b.addEventListener("click", () => select(b.dataset.scenario)));
+function renderAll() {
+  $("consoles").innerHTML = panels.map((_, index) => `<div id="panel-${index}"></div>`).join("");
+  panels.forEach((_, index) => renderPanel(index));
+  renderWorld();
 }
 
-async function select(name) {
-  orderView = "both";
-  const scenario = scenarios.find((s) => s.name === name);
+// --- one console -----------------------------------------------------------
 
-  $("picker").querySelectorAll("button").forEach((b) => {
-    const on = b.dataset.scenario === name;
-    b.className = "px-3 py-2 rounded border text-sm font-medium " +
-      (on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 hover:border-slate-500");
-  });
-  $("scenario-description").textContent = scenario.description;
-  renderChanges(scenario.change_a, scenario.change_b);
-  $("result").innerHTML = `<p class="text-sm text-slate-500">Reconciling&hellip;</p>`;
+const currentValue = (panel, rid, field) =>
+  panel.draft[rid] && field in panel.draft[rid]
+    ? panel.draft[rid][field]
+    : panel.base.resources[rid].fields[field];
 
-  current = await fetch(`/scenarios/${name}/run`, { method: "POST" }).then((r) => r.json());
-  renderResult();
+function movedFields(panel) {
+  const moved = [];
+  for (const [rid, fields] of Object.entries(panel.draft)) {
+    for (const [field, value] of Object.entries(fields)) {
+      if (!same(value, panel.base.resources[rid].fields[field])) moved.push({ rid, field, value });
+    }
+  }
+  return moved;
 }
 
-function changeCard(change, who, tone) {
-  const pres = change.preconditions.length
-    ? change.preconditions.map((p) => `<li class="mono text-xs">${esc(p.field)} ${esc(p.op)} ${esc(val(p.value))}</li>`).join("")
-    : `<li class="text-xs text-slate-400 italic">none declared</li>`;
-  const posts = change.postconditions
-    .map((p) => `<li class="mono text-xs">${esc(p.field)} = ${esc(val(p.value))}</li>`).join("");
+function guardMarkup(rid, field, moved, pinned) {
+  // Always a manual toggle, on every row, and always sent when set.
+  return `<button data-lock="${esc(rid)}.${esc(field)}" title="only apply if this still says what I saw"
+             class="block text-[11px] px-1.5 py-1 rounded border w-[4.5rem] ${pinned
+               ? "bg-amber-100 border-amber-400 text-amber-900 font-semibold"
+               : "bg-white border-slate-300 text-slate-400 hover:border-slate-500"}">${pinned ? "🔒 pinned" : "🔓 pin"}</button>`;
+}
 
-  return `
+function editorMarkup(panel) {
+  return Object.values(panel.base.resources).map((r) => {
+    const rows = Object.keys(r.fields).map((field) => {
+      const value = currentValue(panel, r.id, field);
+      const moved = !same(value, r.fields[field]);
+      const pinned = panel.locks.has(`${r.id}.${field}`);
+      return `
+        <div class="flex items-center gap-2 mt-1.5">
+          <label class="mono text-xs text-slate-600 w-20 shrink-0">${esc(field)}</label>
+          <input data-rid="${esc(r.id)}" data-field="${esc(field)}"
+                 type="${typeof r.fields[field] === "number" ? "number" : "text"}" value="${esc(value)}"
+                 class="mono text-xs flex-1 min-w-0 border rounded px-2 py-1
+                        ${moved ? "border-amber-400 bg-amber-50 font-semibold" : "border-slate-300"}">
+          <span data-guard="${esc(r.id)}.${esc(field)}">${guardMarkup(r.id, field, moved, pinned)}</span>
+        </div>`;
+    }).join("");
+    return `<div class="border-t border-slate-100 pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
+              <div class="mono text-xs font-semibold">${esc(r.id)}
+                <span class="text-slate-400">(${esc(r.type)})</span></div>
+              ${rows}
+            </div>`;
+  }).join("");
+}
+
+function summaryMarkup(panel) {
+  const moved = movedFields(panel);
+  const touched = new Set(moved.map((m) => m.rid));
+
+  const pinList = [...panel.locks];
+  const pinned = (key) => `<div class="mono text-xs text-amber-800">🔒 ${esc(key)}
+      == ${esc(val(fieldValue(panel, key)))}</div>`;
+
+  if (!moved.length) {
+    return `<p class="text-sm text-slate-500">Nothing changed yet.</p>
+      ${pinList.length ? `<div class="mt-1.5">${pinList.map(pinned).join("")}</div>` : ""}`;
+  }
+
+  const lines = moved.map((m) => `
+    <div class="mono text-xs">${esc(m.rid)}.${esc(m.field)}
+      <span class="text-slate-400">${esc(val(panel.base.resources[m.rid].fields[m.field]))}</span>
+      &rarr; <span class="font-semibold">${esc(val(m.value))}</span></div>`).join("");
+
+  // Exactly what the server will derive from this edit, shown before Apply so a
+  // missing or misplaced pin is visible here rather than in the verdict afterwards.
+  const rid = moved[0].rid;
+  const posts = moved.map((m) => `<div class="mono text-xs">${esc(m.field)} = ${esc(val(m.value))}</div>`).join("");
+  const auto = moved.map((m) =>
+    `<div class="mono text-xs">${esc(m.field)} == ${esc(val(panel.base.resources[m.rid].fields[m.field]))}
+       <span class="text-slate-400">automatic</span></div>`);
+  const manual = pinList
+    .filter((key) => key.startsWith(`${rid}.`) && !moved.some((m) => `${m.rid}.${m.field}` === key))
+    .map((key) => `<div class="mono text-xs text-amber-800">${esc(key.split(".")[1])}
+       == ${esc(val(fieldValue(panel, key)))} <span class="text-amber-600">pinned</span></div>`);
+  const foreign = pinList.filter((key) => !key.startsWith(`${rid}.`));
+
+  return `${lines}
+    <div class="mt-2 border-t border-slate-100 pt-2">
+      <div class="text-[11px] uppercase tracking-wider text-slate-500">Will be submitted as</div>
+      <div class="text-[11px] uppercase tracking-wider text-slate-400 mt-1">Postconditions</div>
+      ${posts}
+      <div class="text-[11px] uppercase tracking-wider text-slate-400 mt-1">Preconditions</div>
+      ${auto.concat(manual).join("")}
+      ${manual.length ? "" : `<div class="text-xs text-slate-500 mt-1">
+        Nothing is pinned, so this change reads only what it writes.</div>`}
+    </div>
+    ${touched.size > 1 ? `<p class="text-xs text-rose-600 mt-1">One submission changes one resource; you have edited
+       ${esc([...touched].join(", "))}.</p>` : ""}
+    ${foreign.length ? `<p class="text-xs text-rose-600 mt-1">A pin must be on the resource you are changing.
+       ${esc(foreign.join(", "))} ${foreign.length > 1 ? "are" : "is"} not on ${esc(rid)}.</p>` : ""}`;
+}
+
+const fieldValue = (panel, key) => {
+  const [rid, field] = key.split(".");
+  return panel.base.resources[rid].fields[field];
+};
+
+function renderPanel(index) {
+  const panel = panels[index];
+  const stale = panel.session.live_version > panel.session.base_version;
+  const moved = movedFields(panel);
+  const blocked = !moved.length || new Set(moved.map((m) => m.rid)).size > 1;
+  const tone = index === 0 ? "bg-sky-700" : "bg-fuchsia-700";
+
+  $(`panel-${index}`).innerHTML = `
     <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
-      <div class="px-4 py-2 ${tone} text-white flex items-baseline justify-between">
-        <span class="font-semibold text-sm">${who} &middot; ${esc(change.origin)}</span>
-        <span class="mono text-xs opacity-90">${esc(change.id)}</span>
+      <div class="${tone} text-white px-4 py-2 flex items-baseline justify-between gap-3">
+        <span class="font-semibold text-sm">${esc(panel.session.name)}</span>
+        <span class="mono text-xs opacity-90">
+          working from v${panel.session.base_version} &middot; live v${panel.session.live_version}
+        </span>
       </div>
+      ${stale ? `<button data-rebase class="w-full text-xs bg-amber-100 border-b border-amber-300 px-4 py-1.5 text-left">
+          Someone else has applied since you loaded &mdash; refresh to v${panel.session.live_version}
+          <span class="text-slate-500">(discards your edits)</span>
+        </button>` : ""}
       <div class="p-4">
-        <p class="text-sm text-slate-700">${esc(change.description)}</p>
-        <p class="mono text-xs text-slate-500 mt-1">target: ${esc(change.resource_id)}</p>
-        <div class="mt-3">
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Preconditions</div>
-          <ul class="mt-1 space-y-0.5">${pres}</ul>
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Working copy</div>
+        <p class="text-xs text-slate-500 mt-0.5">
+          Edit a value to change it. <span class="text-amber-800 font-medium">Pin</span> a field you are
+          <em>relying on</em> but not changing &mdash; that is what makes a pair order-dependent.
+        </p>
+        <div data-editor>${editorMarkup(panel)}</div>
+
+        <div class="mt-4 pt-3 border-t border-slate-100">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Your change</div>
+          <div data-summary>${summaryMarkup(panel)}</div>
+          <div class="mt-3 flex gap-2 flex-wrap">
+            <input data-why value="${esc(panel.why)}" autocomplete="off"
+                   class="flex-1 min-w-[10rem] border border-slate-300 rounded px-3 py-2 text-sm">
+            <button data-apply ${blocked ? "disabled" : ""}
+                    class="${tone} text-white rounded px-4 py-2 text-sm font-medium disabled:opacity-30">Apply</button>
+            <button data-discard class="border border-slate-300 rounded px-3 py-2 text-sm">Discard</button>
+          </div>
         </div>
-        <div class="mt-3">
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Postconditions</div>
-          <ul class="mt-1 space-y-0.5">${posts}</ul>
-        </div>
+
+        <div data-result class="mt-4">${panel.last ? resultMarkup(panel) : ""}</div>
       </div>
     </div>`;
+
+  wirePanel(index);
 }
 
-function renderChanges(a, b) {
-  $("changes").innerHTML =
-    changeCard(a, "Change A", "bg-sky-700") + changeCard(b, "Change B", "bg-fuchsia-700");
+function wirePanel(index) {
+  const panel = panels[index];
+  const root = $(`panel-${index}`);
+
+  root.querySelectorAll("input[data-rid]").forEach((input) =>
+    input.addEventListener("input", () => {
+      const { rid, field } = input.dataset;
+      (panel.draft[rid] = panel.draft[rid] || {})[field] = input.value;
+      const moved = !same(input.value, panel.base.resources[rid].fields[field]);
+      input.className = input.className
+        .replace(/border-amber-400 bg-amber-50 font-semibold|border-slate-300/,
+                 moved ? "border-amber-400 bg-amber-50 font-semibold" : "border-slate-300");
+
+      // This row's guard changes meaning the moment the field moves, so redraw it
+      // here rather than waiting for a full re-render (which would steal focus).
+      const slot = root.querySelector(`[data-guard="${rid}.${field}"]`);
+      slot.innerHTML = guardMarkup(rid, field, moved, panel.locks.has(`${rid}.${field}`));
+      wireLock(index, slot.querySelector("button[data-lock]"));
+
+      root.querySelector("[data-summary]").innerHTML = summaryMarkup(panel);
+      const fields = movedFields(panel);
+      root.querySelector("[data-apply]").disabled =
+        !fields.length || new Set(fields.map((m) => m.rid)).size > 1;
+    }));
+
+  root.querySelectorAll("button[data-lock]").forEach((button) => wireLock(index, button));
+
+  root.querySelector("[data-why]").addEventListener("input", (e) => { panel.why = e.target.value; });
+  root.querySelector("[data-apply]").addEventListener("click", () => applyPanel(index));
+  root.querySelector("[data-discard]").addEventListener("click", () => {
+    panel.draft = {};
+    panel.locks = new Set();
+    renderPanel(index);
+  });
+  const rebase = root.querySelector("[data-rebase]");
+  if (rebase) rebase.addEventListener("click", async () => {
+    const view = await post(`/session/${panel.session.session_id}/refresh`);
+    panels[index] = makePanel(index, view);
+    panels[index].session.live_version = view.live_version;
+    renderPanel(index);
+  });
+  wireOrderButtons(index);
 }
+
+function wireLock(index, button) {
+  if (!button) return;   // the row is edited, so its guard is the "auto" chip
+  button.addEventListener("click", () => {
+    const key = button.dataset.lock;
+    const locks = panels[index].locks;
+    locks.has(key) ? locks.delete(key) : locks.add(key);
+    renderPanel(index);
+  });
+}
+
+function wireOrderButtons(index) {
+  // Only the order toggles are rewired here. Calling wirePanel again would attach a
+  // second click handler to every pin, so a pin click would toggle twice and no-op.
+  const panel = panels[index];
+  const root = $(`panel-${index}`);
+  root.querySelectorAll("button[data-order]").forEach((button) =>
+    button.addEventListener("click", () => {
+      panel.orderView = button.dataset.order;
+      root.querySelector("[data-result]").innerHTML = resultMarkup(panel);
+      wireOrderButtons(index);
+    }));
+}
+
+async function applyPanel(index) {
+  const panel = panels[index];
+  const resources = {};
+  for (const m of movedFields(panel)) (resources[m.rid] = resources[m.rid] || {})[m.field] = m.value;
+
+  try {
+    panel.last = await post(`/session/${panel.session.session_id}/submit`, {
+      resources,
+      locks: [...panel.locks].map((key) => {
+        const [resource_id, field] = key.split(".");
+        return { resource_id, field };
+      }),
+      description: panel.why.trim(),
+    });
+  } catch (error) {
+    $(`panel-${index}`).querySelector("[data-result]").innerHTML =
+      `<div class="rounded border border-rose-300 bg-rose-50 p-3 text-sm">
+         <span class="font-semibold">That edit cannot become a change.</span> ${esc(error.message)}</div>`;
+    return;
+  }
+
+  panel.orderView = "both";
+  if (panel.last.committed) {
+    panel.session.base_version = panel.last.live_version;
+    panel.base = panel.last.state;
+    panel.draft = {};
+    panel.locks = new Set();
+    panel.why = "";
+  }
+  panel.session.live_version = panel.last.live_version;
+  renderPanel(index);
+  const other = 1 - index;
+  if (panels[other]) renderPanel(other);   // they may have just gone stale
+  renderWorld();
+}
+
+// --- verdict rendering -----------------------------------------------------
 
 function stateTable(state, title, highlight) {
-  const highlighted = new Set((highlight || []).map((d) => `${d.resource_id}.${d.field}`));
+  const hot = new Set((highlight || []).map((d) => `${d.resource_id}.${d.field}`));
   const rows = Object.values(state.resources).map((r) => {
-    const fields = Object.entries(r.fields).map(([k, v]) => {
-      const hot = highlighted.has(`${r.id}.${k}`);
-      return `<div class="flex justify-between gap-3 px-2 py-0.5 rounded ${hot ? "bg-amber-200 font-semibold" : ""}">
-                <span class="mono text-xs text-slate-600">${esc(k)}</span>
-                <span class="mono text-xs">${esc(val(v))}</span>
-              </div>`;
-    }).join("");
+    const fields = Object.entries(r.fields).map(([k, v]) => `
+      <div class="flex justify-between gap-3 px-2 py-0.5 rounded ${hot.has(`${r.id}.${k}`) ? "bg-amber-200 font-semibold" : ""}">
+        <span class="mono text-xs text-slate-600">${esc(k)}</span>
+        <span class="mono text-xs">${esc(val(v))}</span>
+      </div>`).join("");
     return `<div class="border-t border-slate-100 pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
               <div class="mono text-xs font-semibold">${esc(r.id)} <span class="text-slate-400">(${esc(r.type)})</span></div>
               <div class="mt-1">${fields}</div>
             </div>`;
   }).join("");
   return `<div class="bg-white rounded border border-slate-200 p-3">
-            <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">${title}</div>
+            ${title ? `<div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">${title}</div>` : ""}
             ${rows}
           </div>`;
 }
 
 function noStateNotice(why) {
-  return `<div class="rounded border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-            <span class="font-semibold text-slate-800">No state produced.</span> Nothing was applied &mdash; ${why}
+  return `<div class="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-600">
+            <span class="font-semibold text-slate-800">Nothing was applied</span> &mdash; ${why}
           </div>`;
 }
 
 function applyTrail(results, label) {
-  const rows = results.map((r) => {
-    const ok = r.outcome === "APPLIED";
-    return `<li class="text-xs">
-              <span class="mono ${ok ? "text-emerald-700" : "text-rose-700"} font-semibold">${esc(r.outcome)}</span>
-              <span class="mono text-slate-500"> ${esc(r.change_id)}</span>
-              <div class="text-slate-600 mt-0.5">${esc(r.explanation)}</div>
-            </li>`;
-  }).join("");
+  const rows = results.map((r) => `
+    <li class="text-xs">
+      <span class="mono ${r.outcome === "APPLIED" ? "text-emerald-700" : "text-rose-700"} font-semibold">${esc(r.outcome)}</span>
+      <span class="mono text-slate-500"> ${esc(r.change_id)}</span>
+      <div class="text-slate-600 mt-0.5">${esc(r.explanation)}</div>
+    </li>`).join("");
   return `<div>
             <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">${label}</div>
             <ul class="space-y-2">${rows}</ul>
           </div>`;
 }
 
-function renderResult() {
-  const r = current;
-  const badge = BADGES[r.outcome];
+function changeCard(change, label, tone) {
+  const pres = change.preconditions.length
+    ? change.preconditions.map((p) => `<li class="mono text-xs">${esc(p.field)} ${esc(p.op)} ${esc(val(p.value))}</li>`).join("")
+    : `<li class="text-xs text-slate-400 italic">none</li>`;
+  const posts = change.postconditions.map((p) => `<li class="mono text-xs">${esc(p.field)} = ${esc(val(p.value))}</li>`).join("");
+  return `
+    <div class="bg-white rounded border border-slate-200 overflow-hidden">
+      <div class="px-3 py-1.5 ${tone} text-white flex items-baseline justify-between gap-2">
+        <span class="font-semibold text-xs">${label} &middot; ${esc(change.origin)}</span>
+        <span class="mono text-xs opacity-90 truncate">${esc(change.id)}</span>
+      </div>
+      <div class="p-3">
+        <p class="text-xs text-slate-700">${esc(change.description)}</p>
+        <div class="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Preconditions</div>
+        <ul>${pres}</ul>
+        <div class="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Postconditions</div>
+        <ul>${posts}</ul>
+      </div>
+    </div>`;
+}
 
-  let body = "";
-  if (r.outcome === "MERGED") {
-    body = `
-      ${stateTable(r.final_state, "Accepted state")}
-      <p class="text-sm text-slate-700 mt-3">
-        Invariants checked and confirmed against the accepted state:
-        ${r.invariants_confirmed.map((n) => `<code class="mono text-xs bg-white border border-slate-300 rounded px-1 py-0.5">${esc(n)}</code>`).join(" ")}
-      </p>`;
-  } else if (r.outcome === "CONFLICT") {
+function reconciliationBody(panel, r) {
+  if (r.outcome === "CONFLICT" && r.conflict) {
     const c = r.conflict;
-    body = c ? `
+    return `
       <div class="bg-white rounded border border-slate-200 p-3 mb-3">
         <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Contested field</div>
         <div class="mono text-sm font-semibold">${esc(c.resource_id)}.${esc(c.field)}</div>
         <div class="grid sm:grid-cols-2 gap-2 mt-2">
           <div class="border border-sky-300 bg-sky-50 rounded px-3 py-2">
-            <div class="text-xs text-slate-600">${esc(c.change_a_id)} &middot; ${esc(c.change_a_origin)}</div>
+            <div class="text-xs text-slate-600">${esc(c.change_a_origin)} &middot; applied first</div>
             <div class="mono text-lg font-semibold">${esc(val(c.value_a))}</div>
           </div>
           <div class="border border-fuchsia-300 bg-fuchsia-50 rounded px-3 py-2">
-            <div class="text-xs text-slate-600">${esc(c.change_b_id)} &middot; ${esc(c.change_b_origin)}</div>
+            <div class="text-xs text-slate-600">${esc(c.change_b_origin)} &middot; this console</div>
             <div class="mono text-lg font-semibold">${esc(val(c.value_b))}</div>
           </div>
         </div>
       </div>
-      ${noStateNotice("preserving one value would silently discard the other.")}` :
-      noStateNotice("no order applies both changes.");
-  } else if (r.outcome === "INVARIANT_REJECTED") {
+      ${noStateNotice("preserving one value would silently discard the other.")}`;
+  }
+  if (r.outcome === "CONFLICT") {
+    return `<div class="grid gap-4 md:grid-cols-2 mb-3">
+              ${applyTrail(r.order.results_ab, "Theirs first")}
+              ${applyTrail(r.order.results_ba, "Ours first")}
+            </div>${noStateNotice("no order applies both changes.")}`;
+  }
+  if (r.outcome === "INVARIANT_REJECTED") {
     const named = [...new Set(
       [...r.order.results_ab, ...r.order.results_ba]
         .flatMap((x) => x.invariants_checked.filter((i) => !i.passed))
-        .map((i) => `${i.name}|${i.reason}`))]
-      .map((s) => s.split("|"));
-    body = `
+        .map((i) => `${i.name}|${i.reason}`))].map((s) => s.split("|"));
+    return `
       <div class="bg-white rounded border border-violet-300 p-3 mb-3">
         <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Violated invariant</div>
         ${named.map(([name, reason]) => `
           <div class="mono text-sm font-semibold text-violet-800">${esc(name)}</div>
           <div class="text-sm text-slate-700 mt-0.5">${esc(reason)}</div>`).join("")}
         <p class="text-xs text-slate-600 mt-2">
-          No field is contested here &mdash; the two changes touch different resources. Each is valid alone;
-          only their combination breaks the rule.
+          No field is contested &mdash; each change is valid alone. Only their combination breaks the rule.
         </p>
       </div>
       <div class="grid gap-4 md:grid-cols-2 mb-3">
-        ${applyTrail(r.order.results_ab, "Apply A &rarr; B")}
-        ${applyTrail(r.order.results_ba, "Apply B &rarr; A")}
+        ${applyTrail(r.order.results_ab, "Theirs first")}
+        ${applyTrail(r.order.results_ba, "Ours first")}
       </div>
       ${noStateNotice("neither change is at fault, so neither is discarded.")}`;
-  } else if (r.outcome === "ORDER_DEPENDENT") {
-    const o = r.order;
-    const showAB = orderView === "ab" || orderView === "both";
-    const showBA = orderView === "ba" || orderView === "both";
-    const btn = (key, text) => `<button data-order="${key}"
-        class="px-3 py-1.5 rounded border text-xs font-medium ${orderView === key
-          ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 hover:border-slate-500"}">${text}</button>`;
-    body = `
-      <div class="flex gap-2 mb-3">
-        ${btn("ab", "Apply A &rarr; B")}${btn("ba", "Apply B &rarr; A")}${btn("both", "Show both")}
-      </div>
-      <div class="grid gap-4 ${orderView === "both" ? "md:grid-cols-2" : ""} mb-3">
-        ${showAB ? `<div class="space-y-3">${stateTable(o.state_ab, "Result of A &rarr; B", o.diverging_fields)}${applyTrail(o.results_ab, "What happened")}</div>` : ""}
-        ${showBA ? `<div class="space-y-3">${stateTable(o.state_ba, "Result of B &rarr; A", o.diverging_fields)}${applyTrail(o.results_ba, "What happened")}</div>` : ""}
-      </div>
-      <div class="bg-white rounded border border-slate-200 p-3 mb-3">
-        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Diverging fields</div>
-        ${o.diverging_fields.map((d) => `<div class="mono text-xs">${esc(d.resource_id)}.${esc(d.field)}:
-          A&rarr;B gives <span class="font-semibold">${esc(val(d.value_ab))}</span>,
-          B&rarr;A gives <span class="font-semibold">${esc(val(d.value_ba))}</span></div>`).join("")}
-      </div>
-      ${noStateNotice("neither order is privileged, so the engine does not pick one.")}`;
   }
-
-  const commuteNote = r.commutes
-    ? `The two changes write <span class="font-semibold">disjoint fields</span> (commutes: yes)${
-        r.outcome === "ORDER_DEPENDENT"
-          ? " &mdash; and the order <em>still</em> changes the result, because a precondition reads what the other change writes."
-          : "."}`
-    : `The two changes write the <span class="font-semibold">same field</span> (commutes: no).`;
-
-  $("result").innerHTML = `
-    <div class="rounded-lg border ${badge.box} p-4">
-      <div class="flex items-center gap-3 flex-wrap">
-        <span class="${badge.chip} text-white text-xs font-bold tracking-wider px-2.5 py-1 rounded">${badge.label}</span>
-        <span class="text-xs text-slate-600">${commuteNote}</span>
-      </div>
-      <p class="mono text-xs text-slate-800 mt-3 leading-relaxed whitespace-pre-line">${esc(r.explanation)}</p>
-      <div class="mt-4">${body}</div>
-    </div>`;
-
-  $("result").querySelectorAll("button[data-order]").forEach((b) =>
-    b.addEventListener("click", () => { orderView = b.dataset.order; renderResult(); }));
+  const o = r.order;
+  const showAB = panel.orderView === "ab" || panel.orderView === "both";
+  const showBA = panel.orderView === "ba" || panel.orderView === "both";
+  const btn = (key, text) => `<button data-order="${key}"
+      class="px-3 py-1.5 rounded border text-xs font-medium ${panel.orderView === key
+        ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 hover:border-slate-500"}">${text}</button>`;
+  return `
+    <div class="flex gap-2 mb-3">${btn("ab", "Theirs first")}${btn("ba", "Ours first")}${btn("both", "Show both")}</div>
+    <div class="grid gap-4 ${panel.orderView === "both" ? "md:grid-cols-2" : ""} mb-3">
+      ${showAB ? `<div class="space-y-3">${stateTable(o.state_ab, "If theirs went first", o.diverging_fields)}${applyTrail(o.results_ab, "What happened")}</div>` : ""}
+      ${showBA ? `<div class="space-y-3">${stateTable(o.state_ba, "If ours went first", o.diverging_fields)}${applyTrail(o.results_ba, "What happened")}</div>` : ""}
+    </div>
+    <div class="bg-white rounded border border-slate-200 p-3 mb-3">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Diverging fields</div>
+      ${o.diverging_fields.map((d) => `<div class="mono text-xs">${esc(d.resource_id)}.${esc(d.field)}:
+        theirs-first gives <span class="font-semibold">${esc(val(d.value_ab))}</span>,
+        ours-first gives <span class="font-semibold">${esc(val(d.value_ba))}</span></div>`).join("")}
+    </div>
+    ${noStateNotice("neither order is privileged, so the engine does not pick one.")}`;
 }
 
+function applyBody(panel) {
+  const result = panel.last.apply_result;
+  const checks = (list, title) => list.length ? `
+    <div class="mt-3">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">${title}</div>
+      <ul class="mt-1">${list.map((c) => `<li class="mono text-xs">
+        <span class="${c.passed ? "text-emerald-700" : "text-rose-700"}">${c.passed ? "✓" : "✗"}</span>
+        ${esc(c.description || c.name)}${c.reason ? ` &mdash; ${esc(c.reason)}` : ""}</li>`).join("")}</ul>
+    </div>` : "";
+  return `
+    ${checks(result.preconditions_checked, "Preconditions checked")}
+    ${checks(result.invariants_checked, "Invariants checked")}
+    <div class="mt-3">
+      ${panel.last.committed ? stateTable(panel.last.state, "Accepted state, now live", [])
+                             : noStateNotice("the live state is unchanged.")}
+    </div>`;
+}
+
+function resultMarkup(panel) {
+  const submission = panel.last;
+  // A concurrent change that landed did so by merging with what it overlapped, so say
+  // MERGED. APPLIED is reserved for a change that had nothing to reconcile against.
+  const merged = submission.concurrent && submission.committed && submission.outcome === "APPLIED";
+  const badge = merged ? BADGES.MERGED : (BADGES[submission.outcome] || BADGES.NO_SUCH_RESOURCE);
+  const overlap = submission.concurrent
+    ? `<span class="text-xs bg-slate-800 text-white rounded px-2 py-1">concurrent with ${esc(submission.concurrent_with.join(", "))}</span>`
+    : `<span class="text-xs text-slate-500">nothing landed while this console was working</span>`;
+
+  const pair = submission.reconciliation
+    ? `<div class="grid gap-3 md:grid-cols-2 mb-3">
+         ${changeCard(submission.reconciliation.change_a, "Theirs", "bg-slate-600")}
+         ${changeCard(submission.reconciliation.change_b, "Ours", panel.index === 0 ? "bg-sky-700" : "bg-fuchsia-700")}
+       </div>`
+    : `<div class="mb-3">${changeCard(submission.change, "This change", panel.index === 0 ? "bg-sky-700" : "bg-fuchsia-700")}</div>`;
+
+  return `
+    <div class="rounded-lg border ${badge.box} p-3">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="${badge.chip} text-white text-xs font-bold tracking-wider px-2.5 py-1 rounded">${badge.label}</span>
+        ${overlap}
+      </div>
+      <p class="mono text-xs text-slate-800 mt-3 leading-relaxed whitespace-pre-line">${esc(submission.explanation)}</p>
+      <div class="mt-3">${pair}${submission.reconciliation ? reconciliationBody(panel, submission.reconciliation) : applyBody(panel)}</div>
+    </div>`;
+}
+
+$("open").addEventListener("click", openConsoles);
+$("reset").addEventListener("click", resetWorld);
 boot();
 </script>
 </body>

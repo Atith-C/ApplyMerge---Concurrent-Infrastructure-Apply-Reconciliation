@@ -13,73 +13,131 @@ invariants rather than inventing a compromise. The final accepted state and any
 rejected change are explainable directly from the declarative model and
 automatically checked against its invariants.
 
+Two operators edit the same state side by side. Nobody writes a change by hand:
+what you edit becomes the postconditions, what you were looking at becomes the
+preconditions, and whoever applies second is reconciled against whoever applied
+first.
+
 ## Architecture
 
-Four layers, one direction of dependency. Nothing below the line knows the layer
-above it exists, so the engine is testable and the model is reusable.
+Five layers, one direction of dependency. The engine has no I/O, no clock and no
+knowledge that sessions exist, so it can be tested in isolation and reused
+unchanged above any substrate.
 
 ```mermaid
 flowchart TB
-    subgraph UI["UI · frontend/index.html"]
+    subgraph UI["Console · frontend/index.html"]
         direction LR
-        PICK["scenario picker"] --> CARDS["change cards<br/>preconditions · postconditions"]
-        CARDS --> PANEL["verdict panel<br/>one shape per outcome"]
-        PANEL --> TOGGLE["order toggle<br/>A→B / B→A / both"]
+        C1["two operator panels<br/>working copy · pins · apply"]
+        C2["staged scenarios<br/>4 presets, one per outcome"]
+        C3["verdict panel<br/>one shape per outcome"]
+        C4["shared strip<br/>live state · invariants · history"]
     end
 
     subgraph API["API · api.py · FastAPI"]
         direction LR
-        E1["GET /state"]
-        E2["GET /scenarios"]
-        E3["POST /scenarios/name/run"]
-        E4["POST /reset"]
+        E1["POST /session"]
+        E2["POST /session/{id}/submit"]
+        E3["POST /session/{id}/refresh"]
+        E4["GET /live"]
+        E5["POST /reset"]
     end
 
-    subgraph FIX["Fixtures · scenarios.py"]
-        BASE["base_state<br/>db-primary · db-replica · sg-web"]
-        REG["SCENARIOS registry<br/>4 cases, 1 per outcome"]
+    subgraph SES["Session layer · session.py"]
+        direction TB
+        W["World<br/>live state · version · snapshots<br/>committed changes · history"]
+        DC["derive_change<br/>manifest diff → Change"]
+        SUB["submit<br/>fast path or reconcile path"]
+        SUB --> DC
+        SUB --> W
     end
 
     subgraph ENG["Engine · engine.py"]
         direction TB
         REC["reconcile<br/>the single verdict"]
-        CC["conflict_check<br/>same field, different values"]
+        CC["conflict_check"]
         OC["order_check<br/>runs BOTH orders"]
-        SEQ["apply_sequence"]
         AS["apply_single"]
-        DIFF["diff_states<br/>field-level divergence"]
+        DIFF["diff_states"]
         REC --> CC
         REC --> OC
-        OC --> SEQ --> AS
+        OC --> AS
         OC --> DIFF
     end
 
     subgraph MOD["Model · models.py + invariants.py"]
         direction LR
-        RES["Resource<br/>id · type · fields"]
+        RES["Resource"]
         PRE["Precondition<br/>field op value"]
         POST["Postcondition<br/>field = value"]
         INV["Invariant<br/>predicate over WHOLE state"]
     end
 
     UI -->|"fetch JSON"| API
-    E2 --> REG
-    E3 --> REG
-    E1 --> BASE
-    E4 --> BASE
-    E3 -->|"initial_state, change_a, change_b"| REC
-    REC -->|"ReconciliationResult"| E3
-    REG --> BASE
+    API --> SES
+    SUB --> REC
     AS --> PRE
     AS --> POST
     AS --> INV
     INV --> RES
 ```
 
+### What makes two applies concurrent
+
+A session is stamped with the version that was live when it opened. That stamp is
+the whole concurrency model: two edits built on the same version overlapped in
+time, whatever the wall clock says.
+
+```mermaid
+sequenceDiagram
+    participant A as Alice
+    participant W as World
+    participant B as Bob
+
+    A->>W: POST /session
+    W-->>A: base v0, snapshot of v0
+    B->>W: POST /session
+    W-->>B: base v0, snapshot of v0
+    Note over A,B: both hold v0 — this is what makes them concurrent
+
+    A->>W: submit: replicas 3 to 5
+    Note over W: base v0 = live v0, nothing overlapped
+    W-->>A: APPLIED, live is now v1
+
+    B->>W: submit: replicas 3 to 8
+    Note over W: base v0 but live is v1 — the two applies overlapped
+    W-->>B: CONFLICT, nothing applied, live still v1
+```
+
+### How an edit becomes a declarative change
+
+Nobody writes preconditions by hand. `derive_change` diffs the submitted manifest
+against the snapshot that session was handed.
+
+```mermaid
+flowchart LR
+    S["snapshot at your base version<br/>replicas 3 · status active"] --> D{"diff"}
+    E["manifest as you left it<br/>replicas 5 · status active"] --> D
+    D -->|"fields that moved"| P["POSTCONDITIONS<br/>replicas = 5"]
+    D -->|"what those fields said"| Q["PRECONDITIONS · automatic<br/>replicas == 3"]
+    L["fields you pinned 🔒"] --> R["PRECONDITIONS · pinned<br/>status == active"]
+    P --> CH(["Change"])
+    Q --> CH
+    R --> CH
+```
+
+The automatic preconditions are an optimistic lock — *I decided this while looking
+at 3* — and they need no engine support at all: a stale write fails its own
+precondition through the ordinary path.
+
+A **pin** is the other half. It declares a field you are *relying on* but not
+changing. Without a pin nothing reads a field it does not write, so no pair can be
+order-dependent. The pin is what creates the read.
+
 ### How one apply is decided
 
-`apply_single` is the only place the state is ever written, and it writes to a
-**copy**. A rejected change leaves the caller's state byte-identical.
+`apply_single` is the only place state is ever written, and it writes to a **copy**.
+A rejected change leaves the caller's state byte-identical.
 
 ```mermaid
 flowchart LR
@@ -95,8 +153,8 @@ flowchart LR
 
 ### How the pair is classified
 
-Branch order is load-bearing. "No order applies both" is tested **before**
-"the orders diverge" — otherwise an unrealisable pair would be labelled
+Branch order is load-bearing. "No order applies both" is tested **before** "the
+orders diverge" — otherwise an unrealisable pair would be labelled
 `ORDER_DEPENDENT`, implying some order works when none does.
 
 ```mermaid
@@ -128,11 +186,26 @@ pip install -r requirements.txt
 uvicorn apply_merge.api:app --port 8000
 ```
 
-Then open <http://127.0.0.1:8000/> for the UI, or `/docs` for the API.
+Open <http://127.0.0.1:8000/> for the console, `/docs` for the API, or
+`/scenarios-view` for the canned four-scenario walkthrough.
 
 ```
 pytest -q -p no:cacheprovider
 ```
+
+## Using the console
+
+1. Name the two operators and click **Open**. Both start at `v0`.
+2. Edit any value in either working copy. Edited fields turn amber.
+3. Optionally **🔒 pin** a field you are relying on but not changing.
+4. **Your change** shows exactly what will be submitted — postconditions, automatic
+   preconditions, and pinned ones — before you apply anything.
+5. Apply on one side, then the other. The second one is the one being reconciled.
+
+The four **preset** buttons stage each outcome: they reset the world, reopen both
+sessions at `v0`, and fill both drafts. Presets are a shortcut, not a mode — the
+staged edits go through the same diff → derive → reconcile path as anything typed
+by hand, and editing a staged value before applying will change the verdict.
 
 ## The model
 
@@ -152,7 +225,7 @@ Four declarative pieces, all in `apply_merge/models.py`:
   cross-resource rules are the same kind of thing.
 
 A **Change** targets one resource and carries its preconditions, postconditions,
-a description, and an origin ("Alice" / "Bob").
+a description, and an origin.
 
 ## How to read a result
 
@@ -167,6 +240,10 @@ identical state, and every declared invariant was re-checked against the result.
 The explanation names which fields were disjoint and lists the invariants
 confirmed — not "OK", but `Invariants checked and confirmed: replica_cap,
 ssh_not_public`.
+
+In the console a concurrent change that merged and then landed is badged
+**MERGED**; `APPLIED` is reserved for a change that had nothing to reconcile
+against.
 
 ### CONFLICT
 
@@ -184,10 +261,10 @@ so it is clear that choosing is not a way out.
 Applying A-then-B and B-then-A give different answers — either the resulting
 states diverge, or a change succeeds in one order and is rejected in the other.
 
-This usually means one change's *precondition* reads a field the other change
-*writes*. Note that such a pair can still have disjoint writes: a field-overlap
-check calls them safe, and it is wrong. That is why the engine actually runs both
-orders against copies rather than reasoning about fields.
+This means one change's *precondition* reads a field the other change *writes* —
+in the console, a pin. Note that such a pair can still have disjoint writes: a
+field-overlap check calls them safe, and it is wrong. That is why the engine
+actually runs both orders against copies rather than reasoning about fields.
 
 Nothing is applied. One order may work perfectly, but nothing in the declarative
 model says which operator came first, so choosing one would invent a priority.
@@ -224,24 +301,66 @@ declared values, invariant names, and the invariant's own failure reason.
 
 ## Demo scenarios
 
-Four, in `apply_merge/scenarios.py`, one per outcome:
+Four, in `apply_merge/scenarios.py`, one per outcome. They drive the preset
+buttons, the pure `/scenarios` endpoints, and the test suite from one definition.
 
-| scenario | changes | outcome |
-| --- | --- | --- |
-| `safe_merge` | Alice tags `sg-web.owner`, Bob moves `sg-web.port` | MERGED |
-| `conflict` | Alice sets `db-primary.replicas` to 5, Bob to 8 | CONFLICT |
-| `order_dependent` | Alice promotes to gold *while active*, Bob sets status to maintenance | ORDER_DEPENDENT |
-| `invariant_rejected` | Alice scales db-primary 3&rarr;5, Bob scales db-replica 4&rarr;6 | INVARIANT_REJECTED |
+| scenario | left console | right console | outcome |
+| --- | --- | --- | --- |
+| `safe_merge` | `sg-web.owner` | `sg-web.port` | MERGED |
+| `conflict` | `db-primary.replicas` = 5 | = 8 | CONFLICT |
+| `order_dependent` | `db-primary.status` = maintenance | `tier` = gold, **pinned on `status`** | ORDER_DEPENDENT |
+| `invariant_rejected` | `db-primary.replicas` = 5 | `db-replica.replicas` = 6 | INVARIANT_REJECTED |
+
+Run `order_dependent` a second time with the pin removed and the same pair merges.
+That one click is the entire difference between "these commute" and "the order
+decides".
 
 ## Endpoints
 
 | method | path | purpose |
 | --- | --- | --- |
+| POST | `/session` | open an operator session, pinned to the live version |
+| GET | `/session/{id}` | where that session stands: its base version against live |
+| POST | `/session/{id}/submit` | submit an edited manifest; applied or reconciled |
+| POST | `/session/{id}/refresh` | rebase onto the live state after a rejection |
+| GET | `/live` | live state, version, history, connected operators |
 | GET | `/state` | current resources and the declared invariants |
-| GET | `/scenarios` | all four demo cases with their changes |
-| POST | `/scenarios/{name}/run` | reconcile that scenario, full structured result |
-| POST | `/reset` | reset live state to a scenario's initial state, or the base state |
+| POST | `/reset` | rewind to v0, dropping every session and history line |
+| GET | `/scenarios` | the four canned cases with their changes |
+| POST | `/scenarios/{name}/run` | reconcile that scenario, pure, live state untouched |
+| GET | `/` | the live two-operator console |
+| GET | `/scenarios-view` | the canned scenario walkthrough |
 
 Scenario runs are pure: they reconcile against the scenario's own initial state
 and never mutate the live one, so they can be run in any order, repeatedly, and
 always agree.
+
+## Tests
+
+```
+pytest -q -p no:cacheprovider
+```
+
+82 tests in two files:
+
+- `test_engine.py` — 48. The declarative model, `apply_single`, all four
+  reconciliation outcomes, and the pure scenario endpoints.
+- `test_session.py` — 34. Versioning and snapshot pruning, change derivation from
+  a manifest diff, and **all four outcomes reached through live concurrent
+  editing** rather than fixtures — including the pair that is `ORDER_DEPENDENT`
+  with a pin and `MERGED` without it.
+
+## Known limits
+
+Stated rather than hidden; each is a model change, not a missing branch.
+
+- **One resource per submission.** `Change.resource_id` is a single id, so an edit
+  spanning two resources is refused with an explanation rather than split.
+- **Assignment-only postconditions.** `replicas = 5`, never `replicas += 2`. Two
+  relative increments genuinely commute where two assignments never can, and that
+  cannot currently be expressed.
+- **Merge base.** A session that missed several changes is reconciled against each
+  of them from its own snapshot. In truth each was built on the one before; with
+  two operators the missed list is almost always length one.
+- **No drift.** The recorded state is assumed to be the truth.
+- **Sessions never expire**, so one abandoned session pins the snapshot history.
