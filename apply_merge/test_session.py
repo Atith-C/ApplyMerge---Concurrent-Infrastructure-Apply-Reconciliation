@@ -82,8 +82,9 @@ def test_pruning_keeps_every_version_the_oldest_open_session_still_needs():
     submit(world, alice, edit({"sg-web": {"owner": "platform-team"}}))
 
     # Bob is still on v0, so v0's snapshot and both changes since must survive.
-    assert 0 in world.snapshots
-    assert sorted(world.committed) == [1, 2]
+    # The chain belongs to the store now, so this reaches through to it deliberately.
+    assert 0 in world.store.snapshots
+    assert sorted(world.store.committed) == [1, 2]
 
 
 def test_reset_rewinds_the_version_and_drops_every_session():

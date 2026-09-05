@@ -8,9 +8,11 @@ time, and the pair has to be reconciled rather than simply applied.
 All in memory. No database, no async, no background tasks.
 """
 
-from typing import Any
+import os
+from typing import Any, Protocol
 from uuid import uuid4
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from apply_merge.engine import (
@@ -41,27 +43,98 @@ class HistoryEntry(BaseModel):
     summary: str
 
 
-class World:
-    """The single live state, the versions it has passed through, and its sessions.
+class StateStore(Protocol):
+    """Where the versioned state actually lives.
 
-    `version` counts commits, starting at 0 for the untouched base state. Every
-    version keeps the state as it was (`snapshots`) and the change that produced it
-    (`committed`), so a session that started three versions ago can still be
-    reconciled against exactly what it missed.
+    `World` coordinates sessions and verdicts; a store owns the chain of versions
+    and nothing else. Versions are integers here because that is what orders them;
+    a store backed by git keeps its commit sha alongside the same sequence number.
     """
 
-    def __init__(self) -> None:
+    def reset(self, state: InfraState) -> None:
+        """Discard the chain and start again from `state` at version 0."""
+
+    def head(self) -> tuple[int, InfraState]:
+        """The live version and the state at it."""
+
+    def read(self, version: int) -> InfraState:
+        """The state as it stood at `version`."""
+
+    def changes_since(self, version: int) -> list[Change]:
+        """Every change committed after `version`, oldest first."""
+
+    def append(self, state: InfraState, change: Change, author: str) -> int:
+        """Record `state` as the next version, attributed to `change`."""
+
+    def prune(self, floor: int) -> None:
+        """Forget versions below `floor`. A store that cannot forget may ignore this."""
+
+
+class MemoryStore:
+    """The default store: the whole version chain in process memory.
+
+    `author` is accepted and unused — the origin is already on the change. A store
+    that writes to git needs it to attribute the commit, so it is in the signature.
+    """
+
+    def __init__(self, state: InfraState | None = None) -> None:
+        self.reset(state if state is not None else base_state())
+
+    def reset(self, state: InfraState) -> None:
+        self.version = 0
+        self._head = state
+        self.snapshots: dict[int, InfraState] = {0: state.copy_state()}
+        self.committed: dict[int, Change] = {}
+
+    def head(self) -> tuple[int, InfraState]:
+        return self.version, self._head
+
+    def read(self, version: int) -> InfraState:
+        return self.snapshots[version]
+
+    def changes_since(self, version: int) -> list[Change]:
+        return [self.committed[v] for v in range(version + 1, self.version + 1)]
+
+    def append(self, state: InfraState, change: Change, author: str) -> int:
+        self.version += 1
+        self._head = state
+        self.snapshots[self.version] = state.copy_state()
+        self.committed[self.version] = change
+        return self.version
+
+    def prune(self, floor: int) -> None:
+        for version in [v for v in self.snapshots if v < floor]:
+            del self.snapshots[version]
+            self.committed.pop(version, None)
+
+
+class World:
+    """The live state, the versions it has passed through, and its sessions.
+
+    `version` counts commits, starting at 0 for the untouched base state. Every
+    version keeps the state as it was and the change that produced it, so a session
+    that started three versions ago can still be reconciled against exactly what it
+    missed. Where that chain is kept is the store's business, not this class's.
+    """
+
+    def __init__(self, store: StateStore | None = None) -> None:
+        self.store: StateStore = store if store is not None else MemoryStore()
         self.reset()
 
     def reset(self, state: InfraState | None = None) -> InfraState:
         """Rewind to version 0. Drops every session, snapshot and history line."""
-        self.state = state if state is not None else base_state()
-        self.version = 0
-        self.snapshots: dict[int, InfraState] = {0: self.state.copy_state()}
-        self.committed: dict[int, Change] = {}
+        self.store.reset(state if state is not None else base_state())
         self.sessions: dict[str, Session] = {}
         self.history: list[HistoryEntry] = []
         return self.state
+
+    @property
+    def version(self) -> int:
+        return self.store.head()[0]
+
+    @property
+    def state(self) -> InfraState:
+        return self.store.head()[1]
 
     def open_session(self, name: str) -> Session:
         """Register an operator, pinned to whatever version is live right now."""
@@ -71,24 +144,18 @@ class World:
 
     def snapshot(self, version: int) -> InfraState:
         """The state as it stood at `version`."""
-        return self.snapshots[version]
+        return self.store.read(version)
 
     def changes_since(self, version: int) -> list[Change]:
-        """Every change committed after `version`, oldest first.
-
-        This is what a stale session's edit overlapped with.
-        """
-        return [self.committed[v] for v in range(version + 1, self.version + 1)]
+        """Every change committed after `version`. What a stale session overlapped with."""
+        return self.store.changes_since(version)
 
     def commit(self, state: InfraState, change: Change, origin: str, summary: str) -> int:
         """Make `state` live, attributing it to `change`. Returns the new version."""
-        self.version += 1
-        self.state = state
-        self.snapshots[self.version] = state.copy_state()
-        self.committed[self.version] = change
+        version = self.store.append(state, change, origin)
         self.log(origin, "APPLIED", summary)
-        self._prune()
-        return self.version
+        self.store.prune(self._floor())
+        return version
 
     def log(self, origin: str, outcome: str, summary: str) -> HistoryEntry:
         """Record what happened, at the version live at the time."""
@@ -98,25 +165,33 @@ class World:
         self.history.append(entry)
         return entry
 
-    def _prune(self) -> None:
-        """Forget versions no open session could still need to be reconciled against.
+    def _floor(self) -> int:
+        """The oldest version any open session could still need reconciling against.
 
-        A session based on v5 needs the v5 snapshot and every change committed since,
-        so the floor is the oldest base version anyone still holds.
+        A session based on v5 needs the v5 snapshot and every change committed since.
 
         ponytail: sessions never expire, so one abandoned tab pins history forever.
         Add a last-seen timestamp and evict stale sessions if that ever matters.
         """
-        floor = min(
-            [s.base_version for s in self.sessions.values()] + [self.version]
-        )
-        for version in [v for v in self.snapshots if v < floor]:
-            del self.snapshots[version]
-            self.committed.pop(version, None)
+        return min([s.base_version for s in self.sessions.values()] + [self.version])
 
 
-# The one live world the API serves.
-world = World()
+def build_world() -> World:
+    """The world the API serves, backed by whatever APPLYMERGE_BACKEND asks for.
+
+    `memory` is the default and is what the whole test suite runs against, so the
+    suite never touches the network. `github` arrives in a later phase.
+    """
+    load_dotenv()  # a local .env if there is one; real environment variables win
+    backend = os.environ.get("APPLYMERGE_BACKEND", "memory").strip().lower()
+    if backend == "memory":
+        return World(MemoryStore())
+    raise RuntimeError(
+        f"APPLYMERGE_BACKEND={backend!r} is not available yet. Only 'memory' is."
+    )
+
+
+world = build_world()
 
 
 # --- Phase 2: turning an edit into a declarative change --------------------
