@@ -13,17 +13,26 @@
 <body class="bg-slate-100 text-slate-900">
 <div class="max-w-[110rem] mx-auto px-6 py-8">
 
-  <header class="mb-6">
-    <h1 class="text-2xl font-semibold tracking-tight">ApplyMerge</h1>
-    <p class="text-sm text-slate-600 mt-1 max-w-3xl">
-      Two operators edit the same infrastructure at the same time. What each one changes becomes a
-      declarative change &mdash; postconditions from what moved, preconditions from what they were
-      looking at when they decided. Whoever applies second is reconciled against whoever applied
-      first, rather than simply overwriting them.
-    </p>
+  <header class="mb-6 flex items-start justify-between gap-6 flex-wrap">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">ApplyMerge</h1>
+      <p class="text-sm text-slate-600 mt-1 max-w-3xl">
+        Two operators edit the same infrastructure at the same time. What each one changes becomes a
+        declarative change &mdash; postconditions from what moved, preconditions from what they were
+        looking at when they decided. Whoever applies second is reconciled against whoever applied
+        first, rather than simply overwriting them.
+      </p>
+    </div>
+    <div id="whoami" class="text-right text-sm shrink-0"></div>
   </header>
 
-  <!-- Who is at each console -->
+  <!-- Which repository is live. Only shown when the state is kept in one. -->
+  <section id="repo-banner" class="mb-6 hidden"></section>
+
+  <!-- Sign in. Only shown when the state is kept in a repository. -->
+  <section id="signin" class="mb-6 hidden"></section>
+
+  <!-- Who is at each console. Only shown in memory mode. -->
   <section id="setup" class="mb-6 bg-white rounded-lg border border-slate-200 p-4">
     <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Open two consoles</h2>
     <div class="flex gap-3 flex-wrap items-end">
@@ -46,7 +55,7 @@
   <section id="world" class="mb-6 hidden">
     <div class="bg-white rounded-lg border border-slate-200 p-4">
       <div class="flex items-baseline justify-between gap-3 flex-wrap">
-        <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Stage a scenario</h2>
+        <h2 id="stage-heading" class="text-xs font-semibold uppercase tracking-wider text-slate-500">Stage a scenario</h2>
         <button id="reset" class="text-xs border border-slate-300 rounded px-2 py-1">Reset world</button>
       </div>
       <div id="presets" class="flex flex-wrap gap-2 mt-2"></div>
@@ -64,8 +73,10 @@
           <div id="invariants" class="space-y-2"></div>
         </div>
         <div class="md:col-span-1">
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">History</div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Version chain</div>
           <div id="history" class="space-y-1"></div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mt-3 mb-1">Other consoles</div>
+          <div id="operators" class="space-y-1"></div>
         </div>
       </div>
     </div>
@@ -125,6 +136,13 @@ const PRESETS = {
 const panels = [null, null];   // one per console, see makePanel
 let names = ["", ""];
 
+// When the state lives in a repository, one browser is one GitHub account, so this
+// page shows *your* console and reports the other operators rather than pretending
+// to be both of them. In memory mode it keeps the two-console demo and the presets.
+let githubMode = false;
+let identity = null;           // { login, name, avatar_url, profile_url }
+let operators = [];            // everyone else signed in right now
+
 const $ = (id) => document.getElementById(id);
 const val = (v) => JSON.stringify(v);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -181,7 +199,14 @@ async function openConsoles() {
 }
 
 async function boot() {
+  const live = await api("/live");
+  githubMode = Boolean(live.repo);
+  renderRepoBanner(live);
+
+  if (githubMode) return bootSignedIn(live);
+
   renderPresets();
+  $("setup").classList.remove("hidden");
   const saved = sessionStorage.getItem("applymerge");
   if (!saved) return;
   try {
@@ -199,8 +224,109 @@ async function boot() {
   }
 }
 
+async function bootSignedIn(live) {
+  $("setup").classList.add("hidden");
+  try {
+    const who = await api("/me");
+    identity = who.identity;
+    operators = who.others;
+  } catch {
+    return renderSignIn();          // 401: not signed in yet
+  }
+
+  // One console, opened under this operator's GitHub login. The session id is
+  // remembered per tab so a reload does not silently start a second session.
+  const saved = sessionStorage.getItem("applymerge_console");
+  let view = null;
+  if (saved) {
+    try { view = await api(`/session/${saved}`); } catch { /* the server restarted */ }
+  }
+  if (!view) view = await post("/session", { name: identity.login });
+  sessionStorage.setItem("applymerge_console", view.session_id);
+
+  panels[0] = makePanel(0, view);
+  panels[1] = null;
+
+  // Presets stage two consoles against a scratch world; neither idea applies when
+  // the state is a repository and the other operator is a different person.
+  $("presets").classList.add("hidden");
+  $("preset-hint").classList.add("hidden");
+  $("stage-heading").textContent = "The world";
+  $("reset").textContent = "Re-sync with the repo";
+
+  $("signin").classList.add("hidden");
+  $("world").classList.remove("hidden");
+  renderIdentity();
+  renderAll();
+}
+
+function renderSignIn() {
+  $("world").classList.add("hidden");
+  $("signin").classList.remove("hidden");
+  $("signin").innerHTML = `
+    <div class="bg-white rounded-lg border border-slate-200 p-6 text-center">
+      <h2 class="text-lg font-semibold">Sign in to change this infrastructure</h2>
+      <p class="text-sm text-slate-600 mt-1 max-w-xl mx-auto">
+        Every accepted change becomes a real commit in the repository, authored by you.
+        Rejected ones are never written.
+      </p>
+      <a href="/auth/login"
+         class="inline-block mt-4 bg-slate-900 text-white rounded px-4 py-2 text-sm font-medium">
+        Sign in with GitHub
+      </a>
+      <p class="text-xs text-slate-500 mt-3">Read access to public repositories. Nothing else.</p>
+    </div>`;
+}
+
+function renderIdentity() {
+  const others = operators.length
+    ? operators.map((o) => `<span class="inline-flex items-center gap-1 ml-2">
+         <img src="${esc(o.avatar_url)}" class="w-4 h-4 rounded-full" alt="">
+         <span class="mono text-xs">${esc(o.login)}</span></span>`).join("")
+    : `<span class="text-slate-400 ml-1">nobody else is here</span>`;
+  $("whoami").innerHTML = `
+    <div class="flex items-center justify-end gap-2">
+      <img src="${esc(identity.avatar_url)}" class="w-7 h-7 rounded-full" alt="">
+      <div class="text-left">
+        <div class="font-semibold text-sm leading-tight">${esc(identity.name || identity.login)}</div>
+        <a href="${esc(identity.profile_url)}" target="_blank"
+           class="mono text-xs text-slate-500 hover:underline">@${esc(identity.login)}</a>
+      </div>
+      <button id="signout" class="ml-2 text-xs border border-slate-300 rounded px-2 py-1">sign out</button>
+    </div>
+    <div class="text-xs text-slate-500 mt-1">also here:${others}</div>`;
+  $("signout").addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    sessionStorage.removeItem("applymerge_console");
+    location.reload();
+  });
+}
+
+function renderRepoBanner(live) {
+  if (!live.repo) return;
+  $("repo-banner").classList.remove("hidden");
+  $("repo-banner").innerHTML = `
+    <div class="bg-slate-900 text-slate-100 rounded-lg px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+      <div class="text-sm">
+        The live state is
+        <a class="mono underline" target="_blank"
+           href="https://github.com/${esc(live.repo)}/blob/main/state.json">${esc(live.repo)}/state.json</a>
+      </div>
+      <div class="mono text-xs text-slate-300">
+        v${live.version} ·
+        <a class="underline" target="_blank" href="${esc(live.commit_url)}">${esc(live.ref.slice(0, 8))}</a>
+      </div>
+    </div>`;
+}
+
 async function resetWorld() {
   await post("/reset", {});
+  if (githubMode) {
+    // Against a repository this re-reads rather than rewinding — no history is
+    // rewritten — but it does drop sessions, so this console reopens itself.
+    sessionStorage.removeItem("applymerge_console");
+    return bootSignedIn(await api("/live"));
+  }
   for (const index of [0, 1]) {
     panels[index] = makePanel(index, await post("/session", { name: names[index] }));
   }
@@ -245,22 +371,65 @@ async function renderWorld() {
       <div class="mono text-xs font-semibold text-slate-800">${esc(inv.name)}</div>
       <div class="text-slate-600 text-xs mt-0.5">${esc(inv.description)}</div>
     </div>`).join("");
-  $("history").innerHTML = live.history.length
-    ? live.history.map((h) => `
-        <div class="text-xs">
-          <span class="mono text-slate-400">v${h.version}</span>
-          <span class="font-semibold">${esc(h.origin)}</span>
-          <span class="mono ${h.outcome === "APPLIED" ? "text-emerald-700" : "text-rose-700"}">${esc(h.outcome)}</span>
-        </div>`).join("")
-    : `<p class="text-xs text-slate-400">nothing yet</p>`;
+  // The version chain. In a repository every entry is a real commit you can open.
+  const chain = [...live.versions].reverse().map((v) => `
+    <div class="text-xs flex items-baseline gap-2">
+      <span class="mono text-slate-400">v${v.version}</span>
+      ${v.url
+        ? `<a class="mono text-sky-700 hover:underline" target="_blank" href="${esc(v.url)}">${esc(v.ref.slice(0, 7))}</a>`
+        : `<span class="mono text-slate-400">${esc(v.ref)}</span>`}
+      <span class="text-slate-600 truncate">${esc(v.author || "")}</span>
+    </div>`).join("");
+
+  const attempts = live.history.filter((h) => h.outcome !== "APPLIED").map((h) => `
+    <div class="text-xs">
+      <span class="font-semibold">${esc(h.origin)}</span>
+      <span class="mono text-rose-700">${esc(h.outcome)}</span>
+      <span class="text-slate-400">not written</span>
+    </div>`).join("");
+
+  $("history").innerHTML = (chain || `<p class="text-xs text-slate-400">nothing yet</p>`)
+    + (attempts ? `<div class="mt-2 pt-2 border-t border-slate-100">${attempts}</div>` : "");
+
+  renderRepoBanner(live);
+  renderOperators(live);
+
+  if (githubMode) {
+    try {
+      const who = await api("/me");
+      identity = who.identity;
+      operators = who.others;
+      renderIdentity();
+    } catch { /* signed out in another tab; the next action will say so */ }
+  }
 
   // Everyone else's view of how current they are.
   panels.forEach((panel) => { if (panel) panel.session.live_version = live.version; });
 }
 
+function renderOperators(live) {
+  const mine = panels[0] ? panels[0].session.name : null;
+  const others = live.operators.filter((o) => o.name !== mine);
+  if (!othersSlot()) return;
+  othersSlot().innerHTML = others.length
+    ? others.map((o) => `
+        <div class="text-xs flex items-center gap-2">
+          <span class="font-semibold">${esc(o.name)}</span>
+          <span class="mono text-slate-500">v${o.base_version}</span>
+          ${o.stale
+            ? `<span class="text-amber-700">behind &mdash; will be reconciled</span>`
+            : `<span class="text-emerald-700">current</span>`}
+        </div>`).join("")
+    : `<p class="text-xs text-slate-400">no other console is open</p>`;
+}
+
+const othersSlot = () => $("operators");
+
 function renderAll() {
-  $("consoles").innerHTML = panels.map((_, index) => `<div id="panel-${index}"></div>`).join("");
-  panels.forEach((_, index) => renderPanel(index));
+  const live = panels.filter(Boolean);
+  $("consoles").className = live.length > 1 ? "grid gap-4 xl:grid-cols-2" : "grid gap-4";
+  $("consoles").innerHTML = live.map((p) => `<div id="panel-${p.index}"></div>`).join("");
+  live.forEach((p) => renderPanel(p.index));
   renderWorld();
 }
 

@@ -65,6 +65,23 @@ class SessionView(BaseModel):
     state: InfraState
 
 
+class VersionInfo(BaseModel):
+    """One version in the chain, as the store names it."""
+
+    version: int
+    ref: str
+    url: str = ""
+    author: str = ""
+
+
+class OperatorInfo(BaseModel):
+    """Someone with a console open, and how current they are."""
+
+    name: str
+    base_version: int
+    stale: bool
+
+
 class LiveView(BaseModel):
     """The live world as everyone else sees it."""
 
@@ -76,6 +93,22 @@ class LiveView(BaseModel):
     ref: str = ""
     repo: str = ""
     commit_url: str = ""
+    versions: list[VersionInfo] = Field(default_factory=list)
+    operators: list[OperatorInfo] = Field(default_factory=list)
+
+
+def _versions() -> list[VersionInfo]:
+    """The whole chain, so the console can link each version to its real commit."""
+    store = world.store
+    return [
+        VersionInfo(
+            version=version,
+            ref=store.ref(version),
+            url=store.url(version) if hasattr(store, "url") else "",
+            author=store.author(version) if hasattr(store, "author") else "",
+        )
+        for version in range(world.version + 1)
+    ]
 
 
 def _load(name: str):
@@ -293,6 +326,15 @@ def get_live() -> LiveView:
         ref=world.ref(world.version),
         repo=getattr(getattr(store, "github", None), "repo", ""),
         commit_url=store.url(world.version) if hasattr(store, "url") else "",
+        versions=_versions(),
+        operators=[
+            OperatorInfo(
+                name=s.name,
+                base_version=s.base_version,
+                stale=s.base_version < world.version,
+            )
+            for s in world.sessions.values()
+        ],
     )
 
 
