@@ -459,13 +459,19 @@ function renderRepoBanner(live) {
         <a class="mono underline" target="_blank"
            href="https://github.com/${esc(live.repo)}/blob/main/state.json">${esc(live.repo)}/state.json</a>
       </div>
-      <div class="flex items-center gap-3 text-xs">
-        <a class="text-accent hover:underline" target="_blank"
+      <div class="flex items-center gap-4 text-xs flex-wrap shrink-0">
+        <a class="hover:underline" target="_blank"
+           title="Every change that was accepted is a commit on main"
            href="https://github.com/${esc(live.repo)}/commits/main">
-          ${live.versions.length} commit${live.versions.length === 1 ? "" : "s"} &mdash; accepted
+          <span class="text-muted">accepted</span>
+          <span class="text-accent font-semibold">${live.versions.length} commits</span>
         </a>
-        <a class="text-accent hover:underline" target="_blank"
-           href="https://github.com/${esc(live.repo)}/pulls">pull requests &mdash; rejected</a>
+        <a class="hover:underline" target="_blank"
+           title="Every change that was refused is kept as an open pull request"
+           href="https://github.com/${esc(live.repo)}/pulls">
+          <span class="text-muted">refused</span>
+          <span class="text-accent font-semibold">open pull requests</span>
+        </a>
         <span class="mono text-faint">v${live.version} ·
           <a class="text-accent hover:underline" target="_blank"
              href="${esc(live.commit_url)}">${esc(live.ref.slice(0, 7))}</a>
