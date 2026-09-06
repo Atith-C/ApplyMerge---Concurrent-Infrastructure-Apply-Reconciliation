@@ -5,18 +5,154 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ApplyMerge</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Primer tokens, resolved through CSS variables so the whole theme flips with
+    // one media query instead of a `dark:` variant on every element.
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            canvas: "var(--canvas)",
+            subtle: "var(--canvas-subtle)",
+            line: "var(--border)",
+            fg: "var(--fg)",
+            muted: "var(--fg-muted)",
+            faint: "var(--fg-faint)",
+            accent: "var(--accent)",
+            "accent-subtle": "var(--accent-subtle)",
+            success: "var(--success)",
+            "success-subtle": "var(--success-subtle)",
+            danger: "var(--danger)",
+            "danger-subtle": "var(--danger-subtle)",
+            attention: "var(--attention)",
+            "attention-subtle": "var(--attention-subtle)",
+            severe: "var(--severe)",
+            "severe-subtle": "var(--severe-subtle)",
+            done: "var(--done)",
+            "done-subtle": "var(--done-subtle)",
+          },
+          borderRadius: { DEFAULT: "6px", md: "6px", lg: "12px" },
+        },
+      },
+    };
+  </script>
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-    code, .mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace; }
+    /* Primer, light. GitHub uses 6px radii, a 14px base and near-flat surfaces —
+       not the rounded, shadow-heavy look that reads as generic. */
+    :root {
+      --canvas: #ffffff;      --canvas-subtle: #f6f8fa;
+      --border: #d1d9e0;      --fg: #1f2328;
+      --fg-muted: #59636e;    --fg-faint: #818b98;
+      --accent: #0969da;      --accent-subtle: #ddf4ff;
+      --success: #1a7f37;     --success-subtle: #dafbe1;
+      --danger: #d1242f;      --danger-subtle: #ffebe9;
+      --attention: #9a6700;   --attention-subtle: #fff8c5;
+      --severe: #bc4c00;      --severe-subtle: #fff1e5;
+      --done: #8250df;        --done-subtle: #fbefff;
+      --btn-bg: #f6f8fa;      --btn-hover: #eff2f5;
+      --btn-primary: #1f883d; --btn-primary-hover: #1a7f37;
+      --shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --canvas: #0d1117;      --canvas-subtle: #151b23;
+        --border: #3d444d;      --fg: #f0f6fc;
+        --fg-muted: #9198a1;    --fg-faint: #656c76;
+        --accent: #4493f8;      --accent-subtle: #121d2f;
+        --success: #3fb950;     --success-subtle: #0f2417;
+        --danger: #f85149;      --danger-subtle: #25171c;
+        --attention: #d29922;   --attention-subtle: #272115;
+        --severe: #db6d28;      --severe-subtle: #26190f;
+        --done: #ab7df8;        --done-subtle: #211430;
+        --btn-bg: #21262d;      --btn-hover: #30363d;
+        --btn-primary: #238636; --btn-primary-hover: #29903b;
+        --shadow: 0 0 transparent;
+        color-scheme: dark;
+      }
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+                   Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      background: var(--canvas-subtle);
+      color: var(--fg);
+    }
+    code, .mono, input.mono {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                   "Liberation Mono", monospace;
+    }
+
+    /* Keyboard focus must be visible. Primer's ring, on everything focusable. */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+      border-radius: 6px;
+    }
+
+    /* Primer buttons, as classes rather than repeated utility soup. */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 5px 12px; font-size: 14px; font-weight: 500; line-height: 20px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--btn-bg); color: var(--fg);
+      box-shadow: var(--shadow); cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn:hover:not(:disabled) { background: var(--btn-hover); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--btn-primary); color: #ffffff;
+      border-color: rgba(31, 35, 40, 0.15);
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
+    .btn-sm { padding: 3px 8px; font-size: 12px; line-height: 18px; }
+    .btn-selected {
+      background: var(--accent-subtle); border-color: var(--accent); color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Primer "Box": a bordered surface, not a floating card. */
+    .box {
+      background: var(--canvas); border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .box-header {
+      background: var(--canvas-subtle); border-bottom: 1px solid var(--border);
+      padding: 8px 16px; font-size: 14px; font-weight: 600;
+    }
+
+    /* Primer state label: the pill GitHub uses for Open / Merged / Closed. */
+    .state {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 2em;
+      font-size: 12px; font-weight: 500; line-height: 18px;
+      border: 1px solid transparent; color: #ffffff;
+    }
+
+    .field { border: 1px solid var(--border); background: var(--canvas); color: var(--fg); }
+    .field:focus { border-color: var(--accent); outline: none;
+                   box-shadow: 0 0 0 3px var(--accent-subtle); }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
   </style>
 </head>
-<body class="bg-slate-100 text-slate-900">
-<div class="max-w-[110rem] mx-auto px-6 py-8">
+<body class="bg-subtle text-fg">
+<div class="max-w-7xl mx-auto px-6 py-8">
+<a href="#consoles" class="sr-only">Skip to the consoles</a>
 
   <header class="mb-6 flex items-start justify-between gap-6 flex-wrap">
     <div>
       <h1 class="text-2xl font-semibold tracking-tight">ApplyMerge</h1>
-      <p class="text-sm text-slate-600 mt-1 max-w-3xl">
+      <p class="text-sm text-muted mt-1 max-w-3xl">
         Two operators edit the same infrastructure at the same time. What each one changes becomes a
         declarative change &mdash; postconditions from what moved, preconditions from what they were
         looking at when they decided. Whoever applies second is reconciled against whoever applied
@@ -33,49 +169,49 @@
   <section id="signin" class="mb-6 hidden"></section>
 
   <!-- Who is at each console. Only shown in memory mode. -->
-  <section id="setup" class="mb-6 bg-white rounded-lg border border-slate-200 p-4">
-    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Open two consoles</h2>
+  <section id="setup" class="mb-6 bg-canvas rounded-md border border-line p-4">
+    <h2 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Open two consoles</h2>
     <div class="flex gap-3 flex-wrap items-end">
-      <label class="text-xs text-slate-600">
+      <label class="text-xs text-muted">
         Left operator
         <input id="name-0" autocomplete="off"
-               class="block mt-1 w-48 border border-slate-300 rounded px-3 py-2 text-sm">
+               class="field block mt-1 w-48 rounded px-3 py-2 text-sm">
       </label>
-      <label class="text-xs text-slate-600">
+      <label class="text-xs text-muted">
         Right operator
         <input id="name-1" autocomplete="off"
-               class="block mt-1 w-48 border border-slate-300 rounded px-3 py-2 text-sm">
+               class="field block mt-1 w-48 rounded px-3 py-2 text-sm">
       </label>
-      <button id="open" class="bg-slate-900 text-white rounded px-4 py-2 text-sm font-medium">Open</button>
-      <p id="setup-error" class="text-xs text-rose-600 self-center"></p>
+      <button id="open" type="button" class="btn btn-primary">Open</button>
+      <p id="setup-error" class="text-xs text-danger self-center"></p>
     </div>
   </section>
 
   <!-- Staging and the shared world -->
   <section id="world" class="mb-6 hidden">
-    <div class="bg-white rounded-lg border border-slate-200 p-4">
+    <div class="bg-canvas rounded-md border border-line p-4">
       <div class="flex items-baseline justify-between gap-3 flex-wrap">
-        <h2 id="stage-heading" class="text-xs font-semibold uppercase tracking-wider text-slate-500">Stage a scenario</h2>
-        <button id="reset" class="text-xs border border-slate-300 rounded px-2 py-1">Reset world</button>
+        <h2 id="stage-heading" class="text-xs font-semibold uppercase tracking-wider text-muted">Stage a scenario</h2>
+        <button id="reset" type="button" class="btn btn-sm">Reset world</button>
       </div>
       <div id="presets" class="flex flex-wrap gap-2 mt-2"></div>
-      <p id="preset-hint" class="text-xs text-slate-600 mt-2"></p>
+      <p id="preset-hint" class="text-xs text-muted mt-2"></p>
 
-      <div class="grid gap-4 md:grid-cols-3 mt-4 pt-4 border-t border-slate-100">
+      <div class="grid gap-4 md:grid-cols-3 mt-4 pt-4 border-t border-line">
         <div class="md:col-span-1">
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-            Live state <span id="live-version" class="mono normal-case text-slate-400"></span>
+          <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+            Live state <span id="live-version" class="mono normal-case text-faint"></span>
           </div>
           <div id="live-state"></div>
         </div>
         <div class="md:col-span-1">
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Declared invariants</div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-2">Declared invariants</div>
           <div id="invariants" class="space-y-2"></div>
         </div>
         <div class="md:col-span-1">
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Version chain</div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-2">Version chain</div>
           <div id="history" class="space-y-1"></div>
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mt-3 mb-1">Other consoles</div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-muted mt-3 mb-1">Other consoles</div>
           <div id="operators" class="space-y-1"></div>
         </div>
       </div>
@@ -83,9 +219,11 @@
   </section>
 
   <!-- The two consoles -->
-  <section id="consoles" class="grid gap-4 xl:grid-cols-2"></section>
+  <main><section id="consoles" class="grid gap-4 xl:grid-cols-2"></section>
 
-  <footer class="mt-10 text-xs text-slate-500">
+  </main>
+
+  <footer class="mt-10 text-xs text-muted">
     <a class="underline" href="/docs">/docs</a> &middot;
     <a class="underline" href="/scenarios-view">canned scenario walkthrough</a> &middot;
     every verdict is produced by <code>reconcile()</code> and checked against the declared invariants.
@@ -93,16 +231,25 @@
 </div>
 
 <script>
+// Primer state labels, using GitHub's own semantics so the colour reads before the
+// word does: merged is purple, applied is the green of an open pull request,
+// conflict is the red of a closed one.
 const BADGES = {
-  APPLIED:             { label: "APPLIED",             box: "bg-emerald-50 border-emerald-300", chip: "bg-emerald-600" },
-  MERGED:              { label: "MERGED",              box: "bg-emerald-50 border-emerald-300", chip: "bg-emerald-600" },
-  CONFLICT:            { label: "CONFLICT",            box: "bg-rose-50 border-rose-300",       chip: "bg-rose-600" },
-  ORDER_DEPENDENT:     { label: "ORDER-DEPENDENT",     box: "bg-amber-50 border-amber-300",     chip: "bg-amber-600" },
-  INVARIANT_REJECTED:  { label: "INVARIANT-REJECTED",  box: "bg-violet-50 border-violet-300",   chip: "bg-violet-600" },
-  INVARIANT_VIOLATED:  { label: "INVARIANT-VIOLATED",  box: "bg-violet-50 border-violet-300",   chip: "bg-violet-600" },
-  PRECONDITION_FAILED: { label: "PRECONDITION-FAILED", box: "bg-rose-50 border-rose-300",       chip: "bg-rose-600" },
-  NO_SUCH_RESOURCE:    { label: "NO-SUCH-RESOURCE",    box: "bg-slate-50 border-slate-300",     chip: "bg-slate-600" },
+  MERGED:              { label: "Merged",              tone: "done" },
+  APPLIED:             { label: "Applied",             tone: "success" },
+  CONFLICT:            { label: "Conflict",            tone: "danger" },
+  ORDER_DEPENDENT:     { label: "Order-dependent",     tone: "attention" },
+  INVARIANT_REJECTED:  { label: "Invariant rejected",  tone: "severe" },
+  INVARIANT_VIOLATED:  { label: "Invariant violated",  tone: "severe" },
+  PRECONDITION_FAILED: { label: "Precondition failed", tone: "danger" },
+  NO_SUCH_RESOURCE:    { label: "No such resource",    tone: "muted" },
 };
+
+// Written as inline custom properties rather than generated class names, so the
+// palette cannot drift from the tokens and dark mode needs no second definition.
+const toneVars = (name) => name === "muted"
+  ? { pill: "var(--fg-muted)", surface: "var(--canvas-subtle)", edge: "var(--border)" }
+  : { pill: `var(--${name})`, surface: `var(--${name}-subtle)`, edge: `var(--${name})` };
 
 // Each preset stages one outcome. `first` is applied before `second`, which is the
 // one that ends up reconciling against it — order matters for ORDER_DEPENDENT.
@@ -264,17 +411,17 @@ function renderSignIn() {
   $("world").classList.add("hidden");
   $("signin").classList.remove("hidden");
   $("signin").innerHTML = `
-    <div class="bg-white rounded-lg border border-slate-200 p-6 text-center">
+    <div class="bg-canvas rounded-md border border-line p-6 text-center">
       <h2 class="text-lg font-semibold">Sign in to change this infrastructure</h2>
-      <p class="text-sm text-slate-600 mt-1 max-w-xl mx-auto">
+      <p class="text-sm text-muted mt-1 max-w-xl mx-auto">
         Every accepted change becomes a real commit in the repository, authored by you.
         Rejected ones are never written.
       </p>
       <a href="/auth/login"
-         class="inline-block mt-4 bg-slate-900 text-white rounded px-4 py-2 text-sm font-medium">
+         class="btn btn-primary mt-4">
         Sign in with GitHub
       </a>
-      <p class="text-xs text-slate-500 mt-3">Read access to public repositories. Nothing else.</p>
+      <p class="text-xs text-muted mt-3">Read access to public repositories. Nothing else.</p>
     </div>`;
 }
 
@@ -283,18 +430,18 @@ function renderIdentity() {
     ? operators.map((o) => `<span class="inline-flex items-center gap-1 ml-2">
          <img src="${esc(o.avatar_url)}" class="w-4 h-4 rounded-full" alt="">
          <span class="mono text-xs">${esc(o.login)}</span></span>`).join("")
-    : `<span class="text-slate-400 ml-1">nobody else is here</span>`;
+    : `<span class="text-faint ml-1">nobody else is here</span>`;
   $("whoami").innerHTML = `
     <div class="flex items-center justify-end gap-2">
       <img src="${esc(identity.avatar_url)}" class="w-7 h-7 rounded-full" alt="">
       <div class="text-left">
         <div class="font-semibold text-sm leading-tight">${esc(identity.name || identity.login)}</div>
         <a href="${esc(identity.profile_url)}" target="_blank"
-           class="mono text-xs text-slate-500 hover:underline">@${esc(identity.login)}</a>
+           class="mono text-xs text-muted hover:underline">@${esc(identity.login)}</a>
       </div>
-      <button id="signout" class="ml-2 text-xs border border-slate-300 rounded px-2 py-1">sign out</button>
+      <button id="signout" class="ml-2 text-xs border border-line rounded px-2 py-1">sign out</button>
     </div>
-    <div class="text-xs text-slate-500 mt-1">also here:${others}</div>`;
+    <div class="text-xs text-muted mt-1">also here:${others}</div>`;
   $("signout").addEventListener("click", async () => {
     await fetch("/auth/logout", { method: "POST" });
     sessionStorage.removeItem("applymerge_console");
@@ -306,15 +453,23 @@ function renderRepoBanner(live) {
   if (!live.repo) return;
   $("repo-banner").classList.remove("hidden");
   $("repo-banner").innerHTML = `
-    <div class="bg-slate-900 text-slate-100 rounded-lg px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+    <div class="box px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
       <div class="text-sm">
         The live state is
         <a class="mono underline" target="_blank"
            href="https://github.com/${esc(live.repo)}/blob/main/state.json">${esc(live.repo)}/state.json</a>
       </div>
-      <div class="mono text-xs text-slate-300">
-        v${live.version} ·
-        <a class="underline" target="_blank" href="${esc(live.commit_url)}">${esc(live.ref.slice(0, 8))}</a>
+      <div class="flex items-center gap-3 text-xs">
+        <a class="text-accent hover:underline" target="_blank"
+           href="https://github.com/${esc(live.repo)}/commits/main">
+          ${live.versions.length} commit${live.versions.length === 1 ? "" : "s"} &mdash; accepted
+        </a>
+        <a class="text-accent hover:underline" target="_blank"
+           href="https://github.com/${esc(live.repo)}/pulls">pull requests &mdash; rejected</a>
+        <span class="mono text-faint">v${live.version} ·
+          <a class="text-accent hover:underline" target="_blank"
+             href="${esc(live.commit_url)}">${esc(live.ref.slice(0, 7))}</a>
+        </span>
       </div>
     </div>`;
 }
@@ -355,7 +510,7 @@ async function stage(key) {
 function renderPresets() {
   $("presets").innerHTML = Object.keys(PRESETS).map((key) => `
     <button data-preset="${esc(key)}"
-            class="px-3 py-2 rounded border text-sm font-medium bg-white border-slate-300 hover:border-slate-500">
+            class="btn">
       ${esc(key)}
     </button>`).join("");
   $("presets").querySelectorAll("button").forEach((button) =>
@@ -367,29 +522,29 @@ async function renderWorld() {
   $("live-version").textContent = `v${live.version}`;
   $("live-state").innerHTML = stateTable(live.state, "", []);
   $("invariants").innerHTML = live.state.invariants.map((inv) => `
-    <div class="border border-slate-200 rounded px-3 py-2">
-      <div class="mono text-xs font-semibold text-slate-800">${esc(inv.name)}</div>
-      <div class="text-slate-600 text-xs mt-0.5">${esc(inv.description)}</div>
+    <div class="border border-line rounded px-3 py-2">
+      <div class="mono text-xs font-semibold text-fg">${esc(inv.name)}</div>
+      <div class="text-muted text-xs mt-0.5">${esc(inv.description)}</div>
     </div>`).join("");
   // The version chain. In a repository every entry is a real commit you can open.
   const chain = [...live.versions].reverse().map((v) => `
     <div class="text-xs flex items-baseline gap-2">
-      <span class="mono text-slate-400">v${v.version}</span>
+      <span class="mono text-faint">v${v.version}</span>
       ${v.url
-        ? `<a class="mono text-sky-700 hover:underline" target="_blank" href="${esc(v.url)}">${esc(v.ref.slice(0, 7))}</a>`
-        : `<span class="mono text-slate-400">${esc(v.ref)}</span>`}
-      <span class="text-slate-600 truncate">${esc(v.author || "")}</span>
+        ? `<a class="mono text-accent hover:underline" target="_blank" href="${esc(v.url)}">${esc(v.ref.slice(0, 7))}</a>`
+        : `<span class="mono text-faint">${esc(v.ref)}</span>`}
+      <span class="text-muted truncate">${esc(v.author || "")}</span>
     </div>`).join("");
 
   const attempts = live.history.filter((h) => h.outcome !== "APPLIED").map((h) => `
     <div class="text-xs">
       <span class="font-semibold">${esc(h.origin)}</span>
-      <span class="mono text-rose-700">${esc(h.outcome)}</span>
-      <span class="text-slate-400">not written</span>
+      <span class="mono text-danger">${esc(h.outcome)}</span>
+      <span class="text-faint">not written</span>
     </div>`).join("");
 
-  $("history").innerHTML = (chain || `<p class="text-xs text-slate-400">nothing yet</p>`)
-    + (attempts ? `<div class="mt-2 pt-2 border-t border-slate-100">${attempts}</div>` : "");
+  $("history").innerHTML = (chain || `<p class="text-xs text-faint">nothing yet</p>`)
+    + (attempts ? `<div class="mt-2 pt-2 border-t border-line">${attempts}</div>` : "");
 
   renderRepoBanner(live);
   renderOperators(live);
@@ -415,12 +570,12 @@ function renderOperators(live) {
     ? others.map((o) => `
         <div class="text-xs flex items-center gap-2">
           <span class="font-semibold">${esc(o.name)}</span>
-          <span class="mono text-slate-500">v${o.base_version}</span>
+          <span class="mono text-muted">v${o.base_version}</span>
           ${o.stale
-            ? `<span class="text-amber-700">behind &mdash; will be reconciled</span>`
-            : `<span class="text-emerald-700">current</span>`}
+            ? `<span class="text-attention">behind &mdash; will be reconciled</span>`
+            : `<span class="text-success">current</span>`}
         </div>`).join("")
-    : `<p class="text-xs text-slate-400">no other console is open</p>`;
+    : `<p class="text-xs text-faint">no other console is open</p>`;
 }
 
 const othersSlot = () => $("operators");
@@ -452,13 +607,17 @@ function movedFields(panel) {
 
 function guardMarkup(rid, field, moved, pinned) {
   // Always a manual toggle, on every row, and always sent when set.
-  return `<button data-lock="${esc(rid)}.${esc(field)}" title="only apply if this still says what I saw"
-             class="block text-[11px] px-1.5 py-1 rounded border w-[4.5rem] ${pinned
-               ? "bg-amber-100 border-amber-400 text-amber-900 font-semibold"
-               : "bg-white border-slate-300 text-slate-400 hover:border-slate-500"}">${pinned ? "🔒 pinned" : "🔓 pin"}</button>`;
+  return `<button data-lock="${esc(rid)}.${esc(field)}" type="button"
+             aria-pressed="${pinned}"
+             aria-label="${pinned ? "Unpin" : "Pin"} ${esc(field)} on ${esc(rid)}"
+             title="only apply if this still says what I saw"
+             class="btn btn-sm block w-20 ${pinned
+               ? "bg-attention-subtle border-attention text-attention font-semibold"
+               : "bg-canvas border-line text-faint hover:border-accent"}">${pinned ? "🔒 pinned" : "🔓 pin"}</button>`;
 }
 
 function editorMarkup(panel) {
+  const index = panel.index;
   return Object.values(panel.base.resources).map((r) => {
     const rows = Object.keys(r.fields).map((field) => {
       const value = currentValue(panel, r.id, field);
@@ -466,17 +625,20 @@ function editorMarkup(panel) {
       const pinned = panel.locks.has(`${r.id}.${field}`);
       return `
         <div class="flex items-center gap-2 mt-1.5">
-          <label class="mono text-xs text-slate-600 w-20 shrink-0">${esc(field)}</label>
-          <input data-rid="${esc(r.id)}" data-field="${esc(field)}"
+          <label class="mono text-xs text-muted w-20 shrink-0"
+                 for="f-${index}-${esc(r.id)}-${esc(field)}">${esc(field)}</label>
+          <input id="f-${index}-${esc(r.id)}-${esc(field)}"
+                 data-rid="${esc(r.id)}" data-field="${esc(field)}"
                  type="${typeof r.fields[field] === "number" ? "number" : "text"}" value="${esc(value)}"
-                 class="mono text-xs flex-1 min-w-0 border rounded px-2 py-1
-                        ${moved ? "border-amber-400 bg-amber-50 font-semibold" : "border-slate-300"}">
+                 aria-describedby="${moved ? `edited-${index}` : ""}"
+                 class="field mono text-xs flex-1 min-w-0 rounded px-2 py-1
+                        ${moved ? "border-attention bg-attention-subtle font-semibold" : "border-line"}">
           <span data-guard="${esc(r.id)}.${esc(field)}">${guardMarkup(r.id, field, moved, pinned)}</span>
         </div>`;
     }).join("");
-    return `<div class="border-t border-slate-100 pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
+    return `<div class="border-t border-line pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
               <div class="mono text-xs font-semibold">${esc(r.id)}
-                <span class="text-slate-400">(${esc(r.type)})</span></div>
+                <span class="text-faint">(${esc(r.type)})</span></div>
               ${rows}
             </div>`;
   }).join("");
@@ -493,18 +655,18 @@ function summaryMarkup(panel) {
   const touched = new Set(moved.map((m) => m.rid));
 
   const pinList = [...panel.locks];
-  const pinned = (key) => `<div class="mono text-xs text-amber-800">🔒 ${esc(key)}
+  const pinned = (key) => `<div class="mono text-xs text-attention">🔒 ${esc(key)}
       == ${esc(val(fieldValue(panel, key)))}</div>`;
 
   if (!moved.length) {
     if (!pinList.length) {
-      return `<p class="text-sm text-slate-500">Nothing changed yet.
+      return `<p class="text-sm text-muted">Nothing changed yet.
         Edit a value, or pin a field to assert it still holds.</p>`;
     }
     // Nothing moved, but something is pinned: an assertion, not a change.
-    return `<p class="text-sm text-slate-700">Asserting these still hold:</p>
+    return `<p class="text-sm text-fg">Asserting these still hold:</p>
       <div class="mt-1.5">${pinList.map(pinned).join("")}</div>
-      <p class="text-xs text-slate-500 mt-1.5">
+      <p class="text-xs text-muted mt-1.5">
         Nothing will be written. If someone changed one of these while you were
         looking, you will be told — that is the question being asked.
       </p>`;
@@ -512,7 +674,7 @@ function summaryMarkup(panel) {
 
   const lines = moved.map((m) => `
     <div class="mono text-xs">${esc(m.rid)}.${esc(m.field)}
-      <span class="text-slate-400">${esc(val(panel.base.resources[m.rid].fields[m.field]))}</span>
+      <span class="text-faint">${esc(val(panel.base.resources[m.rid].fields[m.field]))}</span>
       &rarr; <span class="font-semibold">${esc(val(m.value))}</span></div>`).join("");
 
   // Exactly what the server will derive from this edit, shown before Apply so a
@@ -521,26 +683,26 @@ function summaryMarkup(panel) {
   const posts = moved.map((m) => `<div class="mono text-xs">${esc(m.field)} = ${esc(val(m.value))}</div>`).join("");
   const auto = moved.map((m) =>
     `<div class="mono text-xs">${esc(m.field)} == ${esc(val(panel.base.resources[m.rid].fields[m.field]))}
-       <span class="text-slate-400">automatic</span></div>`);
+       <span class="text-faint">automatic</span></div>`);
   const manual = pinList
     .filter((key) => key.startsWith(`${rid}.`) && !moved.some((m) => `${m.rid}.${m.field}` === key))
-    .map((key) => `<div class="mono text-xs text-amber-800">${esc(key.split(".")[1])}
-       == ${esc(val(fieldValue(panel, key)))} <span class="text-amber-600">pinned</span></div>`);
+    .map((key) => `<div class="mono text-xs text-attention">${esc(key.split(".")[1])}
+       == ${esc(val(fieldValue(panel, key)))} <span class="text-attention">pinned</span></div>`);
   const foreign = pinList.filter((key) => !key.startsWith(`${rid}.`));
 
   return `${lines}
-    <div class="mt-2 border-t border-slate-100 pt-2">
-      <div class="text-[11px] uppercase tracking-wider text-slate-500">Will be submitted as</div>
-      <div class="text-[11px] uppercase tracking-wider text-slate-400 mt-1">Postconditions</div>
+    <div class="mt-2 border-t border-line pt-2">
+      <div class="text-xs uppercase tracking-wider text-muted">Will be submitted as</div>
+      <div class="text-xs uppercase tracking-wider text-faint mt-1">Postconditions</div>
       ${posts}
-      <div class="text-[11px] uppercase tracking-wider text-slate-400 mt-1">Preconditions</div>
+      <div class="text-xs uppercase tracking-wider text-faint mt-1">Preconditions</div>
       ${auto.concat(manual).join("")}
-      ${manual.length ? "" : `<div class="text-xs text-slate-500 mt-1">
+      ${manual.length ? "" : `<div class="text-xs text-muted mt-1">
         Nothing is pinned, so this change reads only what it writes.</div>`}
     </div>
-    ${touched.size > 1 ? `<p class="text-xs text-rose-600 mt-1">One submission changes one resource; you have edited
+    ${touched.size > 1 ? `<p class="text-xs text-danger mt-1">One submission changes one resource; you have edited
        ${esc([...touched].join(", "))}.</p>` : ""}
-    ${foreign.length ? `<p class="text-xs text-rose-600 mt-1">A pin must be on the resource you are changing.
+    ${foreign.length ? `<p class="text-xs text-danger mt-1">A pin must be on the resource you are changing.
        ${esc(foreign.join(", "))} ${foreign.length > 1 ? "are" : "is"} not on ${esc(rid)}.</p>` : ""}`;
 }
 
@@ -554,41 +716,44 @@ function renderPanel(index) {
   const stale = panel.session.live_version > panel.session.base_version;
   const moved = movedFields(panel);
   const blocked = submitBlocked(panel, moved);
-  const tone = index === 0 ? "bg-sky-700" : "bg-fuchsia-700";
+  const dot = index === 0 ? "var(--accent)" : "var(--done)";
 
   $(`panel-${index}`).innerHTML = `
-    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
-      <div class="${tone} text-white px-4 py-2 flex items-baseline justify-between gap-3">
-        <span class="font-semibold text-sm">${esc(panel.session.name)}</span>
-        <span class="mono text-xs opacity-90">
+    <div class="bg-canvas rounded-md border border-line overflow-hidden">
+      <div class="box-header flex items-baseline justify-between gap-3">
+        <span class="font-semibold text-sm flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full shrink-0" style="background:${dot}"></span>
+          ${esc(panel.session.name)}
+        </span>
+        <span class="mono text-xs text-muted font-normal">
           working from v${panel.session.base_version} &middot; live v${panel.session.live_version}
         </span>
       </div>
-      ${stale ? `<button data-rebase class="w-full text-xs bg-amber-100 border-b border-amber-300 px-4 py-1.5 text-left">
+      ${stale ? `<button data-rebase class="w-full text-xs bg-attention-subtle border-b border-attention px-4 py-1.5 text-left">
           Someone else has applied since you loaded &mdash; refresh to v${panel.session.live_version}
-          <span class="text-slate-500">(discards your edits)</span>
+          <span class="text-muted">(discards your edits)</span>
         </button>` : ""}
       <div class="p-4">
-        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Working copy</div>
-        <p class="text-xs text-slate-500 mt-0.5">
-          Edit a value to change it. <span class="text-amber-800 font-medium">Pin</span> a field you are
+        <div class="text-xs font-semibold uppercase tracking-wider text-muted">Working copy</div>
+        <p class="text-xs text-muted mt-0.5">
+          Edit a value to change it. <span class="text-attention font-medium">Pin</span> a field you are
           <em>relying on</em> but not changing &mdash; that is what makes a pair order-dependent.
         </p>
         <div data-editor>${editorMarkup(panel)}</div>
+        <p id="edited-${index}" class="sr-only">changed from the value you were shown</p>
 
-        <div class="mt-4 pt-3 border-t border-slate-100">
-          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Your change</div>
+        <div class="mt-4 pt-3 border-t border-line">
+          <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-1">Your change</div>
           <div data-summary>${summaryMarkup(panel)}</div>
           <div class="mt-3 flex gap-2 flex-wrap">
             <input data-why value="${esc(panel.why)}" autocomplete="off"
-                   class="flex-1 min-w-[10rem] border border-slate-300 rounded px-3 py-2 text-sm">
-            <button data-apply ${blocked ? "disabled" : ""}
-                    class="${tone} text-white rounded px-4 py-2 text-sm font-medium disabled:opacity-30">Apply</button>
-            <button data-discard class="border border-slate-300 rounded px-3 py-2 text-sm">Discard</button>
+                   class="field flex-1 min-w-[8rem] rounded px-3 py-2 text-sm">
+            <button data-apply type="button" class="btn btn-primary" ${blocked ? "disabled" : ""}>Apply</button>
+            <button data-discard type="button" class="btn">Discard</button>
           </div>
         </div>
 
-        <div data-result class="mt-4">${panel.last ? resultMarkup(panel) : ""}</div>
+        <div data-result class="mt-4" role="status" aria-live="polite">${panel.last ? resultMarkup(panel) : ""}</div>
       </div>
     </div>`;
 
@@ -605,8 +770,8 @@ function wirePanel(index) {
       (panel.draft[rid] = panel.draft[rid] || {})[field] = input.value;
       const moved = !same(input.value, panel.base.resources[rid].fields[field]);
       input.className = input.className
-        .replace(/border-amber-400 bg-amber-50 font-semibold|border-slate-300/,
-                 moved ? "border-amber-400 bg-amber-50 font-semibold" : "border-slate-300");
+        .replace(/border-attention bg-attention-subtle font-semibold|border-line/,
+                 moved ? "border-attention bg-attention-subtle font-semibold" : "border-line");
 
       // This row's guard changes meaning the moment the field moves, so redraw it
       // here rather than waiting for a full re-render (which would steal focus).
@@ -662,6 +827,16 @@ function wireOrderButtons(index) {
 
 async function applyPanel(index) {
   const panel = panels[index];
+  if (panel.applying) return;   // a second click must not become a second commit
+  panel.applying = true;
+
+  const root = $(`panel-${index}`);
+  const button = root.querySelector("[data-apply]");
+  const wasLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Applying…";
+  root.querySelector("[data-result]").setAttribute("aria-busy", "true");
+
   const resources = {};
   for (const m of movedFields(panel)) (resources[m.rid] = resources[m.rid] || {})[m.field] = m.value;
 
@@ -675,10 +850,14 @@ async function applyPanel(index) {
       description: panel.why.trim(),
     });
   } catch (error) {
-    $(`panel-${index}`).querySelector("[data-result]").innerHTML =
-      `<div class="rounded border border-rose-300 bg-rose-50 p-3 text-sm">
+    root.querySelector("[data-result]").innerHTML =
+      `<div class="rounded border border-danger bg-danger-subtle p-3 text-sm">
          <span class="font-semibold">That edit cannot become a change.</span> ${esc(error.message)}</div>`;
     return;
+  } finally {
+    panel.applying = false;
+    if (button.isConnected) { button.disabled = false; button.textContent = wasLabel; }
+    root.querySelector("[data-result]").removeAttribute("aria-busy");
   }
 
   panel.orderView = "both";
@@ -702,36 +881,36 @@ function stateTable(state, title, highlight) {
   const hot = new Set((highlight || []).map((d) => `${d.resource_id}.${d.field}`));
   const rows = Object.values(state.resources).map((r) => {
     const fields = Object.entries(r.fields).map(([k, v]) => `
-      <div class="flex justify-between gap-3 px-2 py-0.5 rounded ${hot.has(`${r.id}.${k}`) ? "bg-amber-200 font-semibold" : ""}">
-        <span class="mono text-xs text-slate-600">${esc(k)}</span>
+      <div class="flex justify-between gap-3 px-2 py-0.5 rounded ${hot.has(`${r.id}.${k}`) ? "bg-attention-subtle font-semibold" : ""}">
+        <span class="mono text-xs text-muted">${esc(k)}</span>
         <span class="mono text-xs">${esc(val(v))}</span>
       </div>`).join("");
-    return `<div class="border-t border-slate-100 pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
-              <div class="mono text-xs font-semibold">${esc(r.id)} <span class="text-slate-400">(${esc(r.type)})</span></div>
+    return `<div class="border-t border-line pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
+              <div class="mono text-xs font-semibold">${esc(r.id)} <span class="text-faint">(${esc(r.type)})</span></div>
               <div class="mt-1">${fields}</div>
             </div>`;
   }).join("");
-  return `<div class="bg-white rounded border border-slate-200 p-3">
-            ${title ? `<div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">${title}</div>` : ""}
+  return `<div class="bg-canvas rounded border border-line p-3">
+            ${title ? `<div class="text-xs font-semibold uppercase tracking-wider text-muted mb-2">${title}</div>` : ""}
             ${rows}
           </div>`;
 }
 
 function noStateNotice(why) {
-  return `<div class="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-600">
-            <span class="font-semibold text-slate-800">Nothing was applied</span> &mdash; ${why}
+  return `<div class="rounded border border-dashed border-line bg-subtle p-3 text-sm text-muted">
+            <span class="font-semibold text-fg">Nothing was applied</span> &mdash; ${why}
           </div>`;
 }
 
 function applyTrail(results, label) {
   const rows = results.map((r) => `
     <li class="text-xs">
-      <span class="mono ${r.outcome === "APPLIED" ? "text-emerald-700" : "text-rose-700"} font-semibold">${esc(r.outcome)}</span>
-      <span class="mono text-slate-500"> ${esc(r.change_id)}</span>
-      <div class="text-slate-600 mt-0.5">${esc(r.explanation)}</div>
+      <span class="mono ${r.outcome === "APPLIED" ? "text-success" : "text-danger"} font-semibold">${esc(r.outcome)}</span>
+      <span class="mono text-muted"> ${esc(r.change_id)}</span>
+      <div class="text-muted mt-0.5">${esc(r.explanation)}</div>
     </li>`).join("");
   return `<div>
-            <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">${label}</div>
+            <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-1">${label}</div>
             <ul class="space-y-2">${rows}</ul>
           </div>`;
 }
@@ -739,19 +918,22 @@ function applyTrail(results, label) {
 function changeCard(change, label, tone) {
   const pres = change.preconditions.length
     ? change.preconditions.map((p) => `<li class="mono text-xs">${esc(p.field)} ${esc(p.op)} ${esc(val(p.value))}</li>`).join("")
-    : `<li class="text-xs text-slate-400 italic">none</li>`;
+    : `<li class="text-xs text-faint italic">none</li>`;
   const posts = change.postconditions.map((p) => `<li class="mono text-xs">${esc(p.field)} = ${esc(val(p.value))}</li>`).join("");
   return `
-    <div class="bg-white rounded border border-slate-200 overflow-hidden">
-      <div class="px-3 py-1.5 ${tone} text-white flex items-baseline justify-between gap-2">
-        <span class="font-semibold text-xs">${label} &middot; ${esc(change.origin)}</span>
-        <span class="mono text-xs opacity-90 truncate">${esc(change.id)}</span>
+    <div class="bg-canvas rounded border border-line overflow-hidden">
+      <div class="box-header flex items-baseline justify-between gap-2" style="padding:6px 12px">
+        <span class="font-semibold text-xs flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full shrink-0" style="background:${tone}"></span>
+          ${label} &middot; ${esc(change.origin)}
+        </span>
+        <span class="mono text-xs text-muted truncate font-normal">${esc(change.id)}</span>
       </div>
       <div class="p-3">
-        <p class="text-xs text-slate-700">${esc(change.description)}</p>
-        <div class="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Preconditions</div>
+        <p class="text-xs text-fg">${esc(change.description)}</p>
+        <div class="mt-2 text-xs font-semibold uppercase tracking-wider text-muted">Preconditions</div>
         <ul>${pres}</ul>
-        <div class="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Postconditions</div>
+        <div class="mt-2 text-xs font-semibold uppercase tracking-wider text-muted">Postconditions</div>
         <ul>${posts}</ul>
       </div>
     </div>`;
@@ -761,16 +943,16 @@ function reconciliationBody(panel, r) {
   if (r.outcome === "CONFLICT" && r.conflict) {
     const c = r.conflict;
     return `
-      <div class="bg-white rounded border border-slate-200 p-3 mb-3">
-        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Contested field</div>
+      <div class="bg-canvas rounded border border-line p-3 mb-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-2">Contested field</div>
         <div class="mono text-sm font-semibold">${esc(c.resource_id)}.${esc(c.field)}</div>
         <div class="grid sm:grid-cols-2 gap-2 mt-2">
-          <div class="border border-sky-300 bg-sky-50 rounded px-3 py-2">
-            <div class="text-xs text-slate-600">${esc(c.change_a_origin)} &middot; applied first</div>
+          <div class="border border-accent bg-accent-subtle rounded px-3 py-2">
+            <div class="text-xs text-muted">${esc(c.change_a_origin)} &middot; applied first</div>
             <div class="mono text-lg font-semibold">${esc(val(c.value_a))}</div>
           </div>
-          <div class="border border-fuchsia-300 bg-fuchsia-50 rounded px-3 py-2">
-            <div class="text-xs text-slate-600">${esc(c.change_b_origin)} &middot; this console</div>
+          <div class="border border-done bg-done-subtle rounded px-3 py-2">
+            <div class="text-xs text-muted">${esc(c.change_b_origin)} &middot; this console</div>
             <div class="mono text-lg font-semibold">${esc(val(c.value_b))}</div>
           </div>
         </div>
@@ -789,12 +971,12 @@ function reconciliationBody(panel, r) {
         .flatMap((x) => x.invariants_checked.filter((i) => !i.passed))
         .map((i) => `${i.name}|${i.reason}`))].map((s) => s.split("|"));
     return `
-      <div class="bg-white rounded border border-violet-300 p-3 mb-3">
-        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Violated invariant</div>
+      <div class="bg-canvas rounded border border-done p-3 mb-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-2">Violated invariant</div>
         ${named.map(([name, reason]) => `
-          <div class="mono text-sm font-semibold text-violet-800">${esc(name)}</div>
-          <div class="text-sm text-slate-700 mt-0.5">${esc(reason)}</div>`).join("")}
-        <p class="text-xs text-slate-600 mt-2">
+          <div class="mono text-sm font-semibold text-done">${esc(name)}</div>
+          <div class="text-sm text-fg mt-0.5">${esc(reason)}</div>`).join("")}
+        <p class="text-xs text-muted mt-2">
           No field is contested &mdash; each change is valid alone. Only their combination breaks the rule.
         </p>
       </div>
@@ -808,16 +990,16 @@ function reconciliationBody(panel, r) {
   const showAB = panel.orderView === "ab" || panel.orderView === "both";
   const showBA = panel.orderView === "ba" || panel.orderView === "both";
   const btn = (key, text) => `<button data-order="${key}"
-      class="px-3 py-1.5 rounded border text-xs font-medium ${panel.orderView === key
-        ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 hover:border-slate-500"}">${text}</button>`;
+      class="btn btn-sm ${panel.orderView === key
+        ? "btn-selected" : ""}">${text}</button>`;
   return `
     <div class="flex gap-2 mb-3">${btn("ab", "Theirs first")}${btn("ba", "Ours first")}${btn("both", "Show both")}</div>
     <div class="grid gap-4 ${panel.orderView === "both" ? "md:grid-cols-2" : ""} mb-3">
       ${showAB ? `<div class="space-y-3">${stateTable(o.state_ab, "If theirs went first", o.diverging_fields)}${applyTrail(o.results_ab, "What happened")}</div>` : ""}
       ${showBA ? `<div class="space-y-3">${stateTable(o.state_ba, "If ours went first", o.diverging_fields)}${applyTrail(o.results_ba, "What happened")}</div>` : ""}
     </div>
-    <div class="bg-white rounded border border-slate-200 p-3 mb-3">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Diverging fields</div>
+    <div class="bg-canvas rounded border border-line p-3 mb-3">
+      <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-1">Diverging fields</div>
       ${o.diverging_fields.map((d) => `<div class="mono text-xs">${esc(d.resource_id)}.${esc(d.field)}:
         theirs-first gives <span class="font-semibold">${esc(val(d.value_ab))}</span>,
         ours-first gives <span class="font-semibold">${esc(val(d.value_ba))}</span></div>`).join("")}
@@ -829,9 +1011,9 @@ function applyBody(panel) {
   const result = panel.last.apply_result;
   const checks = (list, title) => list.length ? `
     <div class="mt-3">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">${title}</div>
+      <div class="text-xs font-semibold uppercase tracking-wider text-muted">${title}</div>
       <ul class="mt-1">${list.map((c) => `<li class="mono text-xs">
-        <span class="${c.passed ? "text-emerald-700" : "text-rose-700"}">${c.passed ? "✓" : "✗"}</span>
+        <span class="${c.passed ? "text-success" : "text-danger"}">${c.passed ? "✓" : "✗"}</span>
         ${esc(c.description || c.name)}${c.reason ? ` &mdash; ${esc(c.reason)}` : ""}</li>`).join("")}</ul>
     </div>` : "";
   return `
@@ -844,20 +1026,35 @@ function applyBody(panel) {
 }
 
 function parkedMarkup(submission) {
+  // Accepted: it is a commit. Rejected: it is a pull request. Either way, say where.
+  if (submission.committed && submission.commit_url) {
+    return `
+      <div class="mt-3 box px-3 py-2 text-sm">
+        <span class="font-semibold">Your change is now live.</span>
+        Committed as
+        <a class="text-accent underline mono" target="_blank" href="${esc(submission.commit_url)}"
+          >${esc(submission.commit_ref.slice(0, 7))}</a>,
+        authored by you.
+      </div>`;
+  }
+  if (submission.committed) {
+    return `<div class="mt-3 text-xs text-muted">Applied as
+      <span class="mono">${esc(submission.commit_ref)}</span>.</div>`;
+  }
   // A rejected change is not discarded: it is parked as a pull request, cut from
   // the version its author was working on, so the diff is the disagreement itself.
   if (submission.proposal) {
     const p = submission.proposal;
     return `
-      <div class="mt-3 rounded border border-slate-300 bg-white px-3 py-2 text-sm">
+      <div class="mt-3 rounded border border-line bg-canvas px-3 py-2 text-sm">
         <span class="font-semibold">Your change was kept.</span>
         It is open as
-        <a class="text-sky-700 underline" target="_blank" href="${esc(p.url)}">pull request #${p.number}</a>
+        <a class="text-accent underline" target="_blank" href="${esc(p.url)}">pull request #${p.number}</a>
         on <span class="mono text-xs">${esc(p.branch)}</span> &mdash; nothing was merged, and nothing was thrown away.
       </div>`;
   }
   if (submission.proposal_note) {
-    return `<div class="mt-3 text-xs text-slate-500">${esc(submission.proposal_note)}</div>`;
+    return `<div class="mt-3 text-xs text-muted">${esc(submission.proposal_note)}</div>`;
   }
   return "";
 }
@@ -869,23 +1066,26 @@ function resultMarkup(panel) {
   const merged = submission.concurrent && submission.committed && submission.outcome === "APPLIED";
   const badge = merged ? BADGES.MERGED : (BADGES[submission.outcome] || BADGES.NO_SUCH_RESOURCE);
   const overlap = submission.concurrent
-    ? `<span class="text-xs bg-slate-800 text-white rounded px-2 py-1">concurrent with ${esc(submission.concurrent_with.join(", "))}</span>`
-    : `<span class="text-xs text-slate-500">nothing landed while this console was working</span>`;
+    ? `<span class="text-xs rounded px-2 py-1 border"
+             style="background:var(--accent-subtle);color:var(--accent);border-color:var(--accent)"
+           >concurrent with ${esc(submission.concurrent_with.join(", "))}</span>`
+    : `<span class="text-xs text-muted">nothing landed while this console was working</span>`;
 
   const pair = submission.reconciliation
     ? `<div class="grid gap-3 md:grid-cols-2 mb-3">
-         ${changeCard(submission.reconciliation.change_a, "Theirs", "bg-slate-600")}
-         ${changeCard(submission.reconciliation.change_b, "Ours", panel.index === 0 ? "bg-sky-700" : "bg-fuchsia-700")}
+         ${changeCard(submission.reconciliation.change_a, "Theirs", "var(--fg-muted)")}
+         ${changeCard(submission.reconciliation.change_b, "Ours", panel.index === 0 ? "var(--accent)" : "var(--done)")}
        </div>`
-    : `<div class="mb-3">${changeCard(submission.change, "This change", panel.index === 0 ? "bg-sky-700" : "bg-fuchsia-700")}</div>`;
+    : `<div class="mb-3">${changeCard(submission.change, "This change", panel.index === 0 ? "var(--accent)" : "var(--done)")}</div>`;
 
+  const t = toneVars(badge.tone);
   return `
-    <div class="rounded-lg border ${badge.box} p-3">
+    <div class="rounded-md border p-3" style="background:${t.surface};border-color:${t.edge}">
       <div class="flex items-center gap-2 flex-wrap">
-        <span class="${badge.chip} text-white text-xs font-bold tracking-wider px-2.5 py-1 rounded">${badge.label}</span>
+        <span class="state" style="background:${t.pill}">${badge.label}</span>
         ${overlap}
       </div>
-      <p class="mono text-xs text-slate-800 mt-3 leading-relaxed whitespace-pre-line">${esc(submission.explanation)}</p>
+      <p class="mono text-xs text-fg mt-3 leading-relaxed whitespace-pre-line">${esc(submission.explanation)}</p>
       ${parkedMarkup(submission)}
       <div class="mt-3">${pair}${submission.reconciliation ? reconciliationBody(panel, submission.reconciliation) : applyBody(panel)}</div>
     </div>`;

@@ -385,6 +385,34 @@ def test_parking_failing_never_costs_you_the_verdict():
     assert "no PR permission" in result.proposal_note
 
 
+def test_an_accepted_change_reports_the_commit_it_became():
+    """A rejection links to its pull request; an acceptance had nowhere to point."""
+    store, github = a_store()
+    world = World(store)
+    alice = world.open_session("atith-c")
+
+    result = submit(
+        world, alice, Edit(resources={"db-primary": {"replicas": 5}}), token="tok-atith"
+    )
+
+    assert result.committed
+    assert result.commit_ref == "c1"
+    assert result.commit_url.endswith("/commit/c1")
+
+
+def test_a_rejected_change_reports_no_commit():
+    store, _ = a_store()
+    world = World(store)
+    alice = world.open_session("atith-c")
+
+    result = submit(
+        world, alice, Edit(resources={"db-primary": {"replicas": 99}}), token="tok-atith"
+    )
+
+    assert result.committed is False
+    assert result.commit_ref == "" and result.commit_url == ""
+
+
 # --- the World over a git-backed store -------------------------------------
 
 

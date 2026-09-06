@@ -282,6 +282,15 @@ def test_an_edit_on_the_live_version_applies_without_reconciliation():
     assert alice.base_version == 1  # the session moves on with the world
 
 
+def test_in_memory_the_commit_reference_is_the_version_number():
+    """There is no sha to link to, so the console falls back to naming the version."""
+    alice = world.open_session("Alice")
+    result = submit(world, alice, edit({"db-primary": {"replicas": 5}}))
+
+    assert result.commit_ref == "v1"
+    assert result.commit_url == ""
+
+
 def test_a_lone_edit_that_breaks_an_invariant_is_rejected_and_nothing_commits():
     alice = world.open_session("Alice")
     result = submit(world, alice, edit({"db-primary": {"replicas": 9}}))

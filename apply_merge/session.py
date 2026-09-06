@@ -422,6 +422,9 @@ class Submission(BaseModel):
     # A rejected change is parked as a pull request where the state lives in a repo.
     proposal: PullRequest | None = None
     proposal_note: str = ""
+    # An accepted one becomes a commit. Both halves of the story are linkable.
+    commit_ref: str = ""
+    commit_url: str = ""
 
 
 def _land(
@@ -509,6 +512,17 @@ def _park(
         return None, f"The verdict stands; the pull request could not be opened: {failure}"
 
 
+def _landed(world: World, committed: bool) -> dict[str, str]:
+    """Where an accepted change ended up, so the console can link to it."""
+    if not committed:
+        return {}
+    store = world.store
+    return {
+        "commit_ref": world.ref(world.version),
+        "commit_url": store.url(world.version) if hasattr(store, "url") else "",
+    }
+
+
 def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submission:
     """Turn a session's edit into a change and decide what happens to it.
 
@@ -543,6 +557,7 @@ def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submi
             state=world.state,
             proposal=parked,
             proposal_note=note,
+            **_landed(world, committed),
         )
 
     overlap = (
@@ -593,4 +608,5 @@ def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submi
         committed=committed,
         apply_result=result,
         state=world.state,
+        **_landed(world, committed),
     )
