@@ -413,6 +413,35 @@ def test_a_rejected_change_reports_no_commit():
     assert result.commit_ref == "" and result.commit_url == ""
 
 
+def test_a_commit_made_outside_the_app_is_reconciled_against_not_reverted():
+    """The GitHub-to-app direction.
+
+    Someone edits state.json on github.com while a console holds an older view. The
+    write is refused because the blob it was based on moved, and the retry treats
+    that commit as the concurrent change it is. Reading the blob sha fresh instead
+    would have handed GitHub the value it just gave us and quietly reverted them.
+    """
+    store, github = a_store()
+    world = World(store)
+    alice = world.open_session("atith-c")
+    world.state  # populate the cached chain at v0
+
+    # ... and now a commit lands that the app did not make and has not seen.
+    outside = base_state()
+    outside.resources["db-replica"].fields["tier"] = "platinum"
+    github.seed(dumps(outside), "c1", login="someone", message="hand edit on github.com")
+
+    result = submit(
+        world, alice, Edit(resources={"sg-web": {"owner": "platform"}}), token="tok-atith"
+    )
+
+    assert result.concurrent                       # it was noticed, not ignored
+    assert result.committed                        # disjoint, so it still merges
+    live = store.head()[1].resources
+    assert live["db-replica"].fields["tier"] == "platinum"   # theirs survived
+    assert live["sg-web"].fields["owner"] == "platform"      # and so did ours
+
+
 # --- the World over a git-backed store -------------------------------------
 
 

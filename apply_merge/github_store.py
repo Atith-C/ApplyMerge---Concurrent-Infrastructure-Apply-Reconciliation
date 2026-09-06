@@ -168,13 +168,21 @@ class GitHubStore:
             )
         self._ensure()
         self.token = self.token or token
-        head_file = self.github.read_file(self.path, self.token)
+
+        # The blob sha we send is the one at the version *we believe* is head, not a
+        # freshly read one. Reading it fresh would hand GitHub the sha we just saw and
+        # defeat its own optimistic lock: a commit made on github.com since our last
+        # refresh would be silently reverted. Blob shas are content-addressed, so this
+        # refuses only when state.json actually moved — an unrelated commit is fine.
+        at_our_head = self.github.read_file(
+            self.path, self.token, ref=self._chain[-1].sha
+        )
         self.github.write_file(
             self.path,
             dumps(state),
             message or commit_message(change, [], []),
             token,
-            head_file.blob_sha,
+            at_our_head.blob_sha,
         )
         self._chain = []
         self.refresh()

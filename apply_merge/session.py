@@ -22,7 +22,7 @@ from apply_merge.engine import (
     apply_single,
     reconcile,
 )
-from apply_merge.github import GitHub, PullRequest, commit_message
+from apply_merge.github import GitHub, PullRequest, StaleWrite, commit_message
 from apply_merge.github_store import GitHubStore
 from apply_merge.models import Change, Postcondition, Precondition
 from apply_merge.scenarios import base_state
@@ -524,6 +524,23 @@ def _landed(world: World, committed: bool) -> dict[str, str]:
 
 
 def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submission:
+    """Submit an edit, reconciling against anything that landed while it was written.
+
+    A change committed outside ApplyMerge — by hand on github.com, or by a push —
+    is discovered here rather than ignored. The store refuses the write because the
+    blob it was based on has moved, and the retry sees that commit as what it is: a
+    concurrent change to reconcile against.
+    """
+    try:
+        return _submit_once(world, session, edit, token)
+    except StaleWrite:
+        # Someone wrote to the repository between our last refresh and this apply.
+        if hasattr(world.store, "refresh"):
+            world.store.refresh()
+        return _submit_once(world, session, edit, token)
+
+
+def _submit_once(world: World, session: Session, edit: Edit, token: str = "") -> Submission:
     """Turn a session's edit into a change and decide what happens to it.
 
     Two paths. If the session's base is still live, nothing overlapped and the change
