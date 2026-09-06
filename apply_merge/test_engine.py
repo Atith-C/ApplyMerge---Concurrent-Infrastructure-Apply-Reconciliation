@@ -15,6 +15,7 @@ from apply_merge.engine import (
     order_check,
     reconcile,
 )
+from apply_merge.invariants import replicas_non_negative
 from apply_merge.models import (
     Change,
     Invariant,
@@ -423,7 +424,11 @@ def test_safe_merge_preserves_both_intents():
     assert merged["owner"] == "platform-team"
     assert merged["port"] == 8443
     assert merged["ssh_cidr"] == "10.0.0.0/8"
-    assert result.invariants_confirmed == ["replica_cap", "ssh_not_public"]
+    assert result.invariants_confirmed == [
+        "replica_cap",
+        "replicas_non_negative",
+        "ssh_not_public",
+    ]
     assert "disjoint fields of sg-web" in result.explanation
 
 
@@ -481,7 +486,11 @@ def test_get_state_lists_resources_and_invariants_without_predicates():
     assert sorted(body["resources"]) == ["db-primary", "db-replica", "sg-web"]
     assert body["resources"]["db-primary"]["fields"]["replicas"] == 3
     # Rules travel as name + description; the callable behind them never does.
-    assert [i["name"] for i in body["invariants"]] == ["replica_cap", "ssh_not_public"]
+    assert [i["name"] for i in body["invariants"]] == [
+        "replica_cap",
+        "replicas_non_negative",
+        "ssh_not_public",
+    ]
     assert "must be <= 10" in body["invariants"][0]["description"]
     assert "predicate" not in body["invariants"][0]
 
@@ -522,7 +531,11 @@ def test_run_safe_merge_returns_the_merged_state():
     fields = body["final_state"]["resources"]["sg-web"]["fields"]
     assert fields["owner"] == "platform-team"
     assert fields["port"] == 8443
-    assert body["invariants_confirmed"] == ["replica_cap", "ssh_not_public"]
+    assert body["invariants_confirmed"] == [
+        "replica_cap",
+        "replicas_non_negative",
+        "ssh_not_public",
+    ]
 
 
 def test_run_conflict_returns_the_contested_field_and_no_final_state():
@@ -588,6 +601,46 @@ def test_reset_to_a_scenario_then_back_to_base():
 
 
 # --- Coverage: the last reachable reconcile branch --------------------------
+
+
+def bounded_state() -> InfraState:
+    """The minimal world, declaring the real non-negativity rule rather than a stand-in."""
+    return InfraState(
+        resources={
+            "db-1": Resource(id="db-1", type="database", fields={"replicas": 3})
+        },
+        invariants=[replicas_non_negative],
+    )
+
+
+def resize(change_id: str, to: int) -> Change:
+    return Change(
+        id=change_id,
+        resource_id="db-1",
+        postconditions=[Postcondition(field="replicas", value=to)],
+        description=f"resize db-1 to {to}",
+        origin="Alice",
+    )
+
+
+def test_a_negative_replica_count_is_refused():
+    """`replica_cap` bounds the fleet from above only, so -8 satisfied it by making
+    the total smaller. Found in a real commit history, not by reading the code."""
+    state = bounded_state()
+
+    new_state, result = apply_single(state, resize("c-negative", -8))
+
+    assert result.outcome == "INVARIANT_VIOLATED"
+    assert "replicas_non_negative" in result.explanation
+    assert "cannot be negative" in result.explanation
+    assert new_state.resources["db-1"].fields["replicas"] == 3   # untouched
+
+
+def test_scaling_to_zero_is_allowed_because_zero_replicas_is_a_real_intent():
+    """Only *below* zero is nonsense. "Scale this down to nothing" is a real request."""
+    _, result = apply_single(bounded_state(), resize("c-zero", 0))
+
+    assert result.outcome == "APPLIED"
 
 
 def test_conflict_when_no_order_applies_both_and_the_blocker_is_a_precondition():
