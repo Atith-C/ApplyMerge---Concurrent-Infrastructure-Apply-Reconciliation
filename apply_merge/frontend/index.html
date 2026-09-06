@@ -830,6 +830,25 @@ function applyBody(panel) {
     </div>`;
 }
 
+function parkedMarkup(submission) {
+  // A rejected change is not discarded: it is parked as a pull request, cut from
+  // the version its author was working on, so the diff is the disagreement itself.
+  if (submission.proposal) {
+    const p = submission.proposal;
+    return `
+      <div class="mt-3 rounded border border-slate-300 bg-white px-3 py-2 text-sm">
+        <span class="font-semibold">Your change was kept.</span>
+        It is open as
+        <a class="text-sky-700 underline" target="_blank" href="${esc(p.url)}">pull request #${p.number}</a>
+        on <span class="mono text-xs">${esc(p.branch)}</span> &mdash; nothing was merged, and nothing was thrown away.
+      </div>`;
+  }
+  if (submission.proposal_note) {
+    return `<div class="mt-3 text-xs text-slate-500">${esc(submission.proposal_note)}</div>`;
+  }
+  return "";
+}
+
 function resultMarkup(panel) {
   const submission = panel.last;
   // A concurrent change that landed did so by merging with what it overlapped, so say
@@ -854,6 +873,7 @@ function resultMarkup(panel) {
         ${overlap}
       </div>
       <p class="mono text-xs text-slate-800 mt-3 leading-relaxed whitespace-pre-line">${esc(submission.explanation)}</p>
+      ${parkedMarkup(submission)}
       <div class="mt-3">${pair}${submission.reconciliation ? reconciliationBody(panel, submission.reconciliation) : applyBody(panel)}</div>
     </div>`;
 }

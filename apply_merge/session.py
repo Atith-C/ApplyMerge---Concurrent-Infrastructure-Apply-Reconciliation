@@ -22,7 +22,7 @@ from apply_merge.engine import (
     apply_single,
     reconcile,
 )
-from apply_merge.github import GitHub, commit_message
+from apply_merge.github import GitHub, PullRequest, commit_message
 from apply_merge.github_store import GitHubStore
 from apply_merge.models import Change, Postcondition, Precondition
 from apply_merge.scenarios import base_state
@@ -397,6 +397,9 @@ class Submission(BaseModel):
     apply_result: ApplyResult | None = None
     reconciliation: ReconciliationResult | None = None
     state: InfraState
+    # A rejected change is parked as a pull request where the state lives in a repo.
+    proposal: PullRequest | None = None
+    proposal_note: str = ""
 
 
 def _land(
@@ -426,6 +429,51 @@ def _land(
         return result, True
     world.log(session.name, result.outcome, f"{note}{result.explanation}")
     return result, False
+
+
+def _park(
+    world: World,
+    session: Session,
+    change: Change,
+    base: int,
+    outcome: str,
+    explanation: str,
+    token: str,
+) -> tuple[PullRequest | None, str]:
+    """Keep a rejected change as a pull request, if the state lives somewhere that has them.
+
+    Best effort on purpose. The verdict is the answer and must survive whatever
+    GitHub does next, so a failure here is reported beside the verdict rather than
+    replacing it with an error.
+    """
+    store = world.store
+    if not hasattr(store, "propose"):
+        return None, ""  # memory mode has nowhere to park anything
+    if not token:
+        return None, "Sign in to keep a rejected change as a pull request."
+
+    # The proposal is what this operator's own base would have become. It applies
+    # cleanly there by construction — it was derived from it.
+    proposed, result = apply_single(world.snapshot(base), change)
+    if not result.applied:
+        return None, f"Could not stage the proposal: {result.explanation}"
+
+    title = f"{outcome}: {change.description}"
+    body = "\n".join([
+        f"Proposed by **{change.origin}**, working from `{world.ref(base)}`.",
+        "",
+        "```",
+        explanation,
+        "```",
+        "",
+        "This change was **not** applied to the live state. It is kept here rather ",
+        "than discarded: nothing about it is wrong on its own, and merging it is a ",
+        "decision for a person to make.",
+    ])
+    try:
+        return store.propose(proposed, change, title, body, token, base), ""
+    except Exception as failure:  # noqa: BLE001 — the verdict must survive any of them
+        return None, f"The verdict stands; the pull request could not be opened: {failure}"
 
 
 def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submission:
@@ -471,6 +519,10 @@ def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submi
         verdict = reconcile(snapshot, other, change)
         if verdict.outcome != "MERGED":
             world.log(session.name, verdict.outcome, f"{change.id} vs {other.id}")
+            parked, note = _park(
+                world, session, change, base, verdict.outcome,
+                f"{overlap}\n{verdict.explanation}", token,
+            )
             return Submission(
                 name=session.name,
                 base_version=base,
@@ -483,6 +535,8 @@ def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submi
                 committed=False,
                 reconciliation=verdict,
                 state=world.state,
+                proposal=parked,
+                proposal_note=note,
             )
 
     result, committed = _land(world, session, change, f"{overlap} ", token, missed)

@@ -13,7 +13,7 @@ the facts; the program holds the rules.
 import json
 
 from apply_merge.engine import InfraState
-from apply_merge.github import CommitInfo, GitHub, commit_message
+from apply_merge.github import CommitInfo, GitHub, PullRequest, commit_message
 from apply_merge.invariants import DEFAULT_INVARIANTS
 from apply_merge.models import Change, Invariant, Postcondition, Resource
 
@@ -182,6 +182,43 @@ class GitHubStore:
 
     def prune(self, floor: int) -> None:
         """Git forgets nothing, which is the point of keeping the chain in it."""
+
+    # --- rejected changes, kept rather than discarded ------------------------
+
+    def propose(
+        self,
+        state: InfraState,
+        change: Change,
+        title: str,
+        body: str,
+        token: str,
+        from_version: int,
+    ) -> PullRequest:
+        """Park a rejected change as a branch and an open pull request.
+
+        The branch is cut from the version the operator was actually working on, not
+        from the head, so the pull request's diff *is* the disagreement: their intent
+        against what landed instead. Nothing is merged, and nothing is discarded —
+        which is what "neither change is at fault" has to mean if it means anything.
+        """
+        self._ensure()
+        base_sha = self._commit(from_version).sha
+        branch = f"applymerge/{change.id}"
+
+        self.github.create_branch(branch, base_sha, token)
+        at_base = self.github.read_file(self.path, self.token, ref=base_sha)
+        self.github.write_file(
+            self.path, dumps(state), title, token, at_base.blob_sha, branch=branch
+        )
+        return self.github.create_pull(title, body, branch, token)
+
+    def open_proposals(self) -> list[PullRequest]:
+        """Every parked proposal still waiting."""
+        return [
+            pull
+            for pull in self.github.list_pulls(self.token)
+            if pull.branch.startswith("applymerge/")
+        ]
 
     # --- commits that ApplyMerge did not write ------------------------------
 

@@ -27,6 +27,8 @@ class FakeGitHub:
         self.blobs = {}     # sha -> text
         self.written = []   # (message, token) for every write
         self.calls = 0      # every request, so "no network at construction" is testable
+        self.branches = {}  # name -> sha it was cut from
+        self.pulls = []     # PullRequest, newest last
 
     def seed(self, text, sha="c0", login="atith-c", message="The world at version zero"):
         self.blobs[sha] = text
@@ -49,7 +51,32 @@ class FakeGitHub:
         sha = ref or self.commits[0]["sha"]
         return RemoteFile(text=self.blobs[sha], blob_sha=sha)
 
-    def write_file(self, path, text, message, token, blob_sha):
+    def create_branch(self, name, from_sha, token):
+        self.calls += 1
+        self.branches[name] = from_sha
+
+    def create_pull(self, title, body, head, token, base=None):
+        from apply_merge.github import PullRequest
+        self.calls += 1
+        pull = PullRequest(
+            number=len(self.pulls) + 1,
+            title=title,
+            url=f"https://github.com/{self.repo}/pull/{len(self.pulls) + 1}",
+            branch=head,
+        )
+        self.pulls.append((pull, body))
+        return pull
+
+    def list_pulls(self, token, state="open"):
+        self.calls += 1
+        return [pull for pull, _ in self.pulls]
+
+    def write_file(self, path, text, message, token, blob_sha, branch=None):
+        if branch:                      # a proposal, not the live state
+            self.calls += 1
+            self.blobs[f"{branch}:{blob_sha}"] = text
+            from apply_merge.github import CommitInfo
+            return CommitInfo(sha=f"{branch}-commit", message=message)
         if blob_sha != self.commits[0]["sha"]:
             from apply_merge.github import StaleWrite
             raise StaleWrite("the file moved under us")
@@ -256,6 +283,61 @@ def test_a_hand_made_commit_touching_two_resources_is_refused_rather_than_guesse
     with pytest.raises(StoreError) as raised:
         store.changes_since(0)
     assert "cannot be reconstructed" in str(raised.value)
+
+
+# --- rejected changes are parked, not discarded ----------------------------
+
+
+def test_a_rejected_change_becomes_a_branch_and_a_pull_request():
+    store, github = a_store()
+    proposed = store.read(0).copy_state()
+    proposed.resources["db-primary"].fields["replicas"] = 8
+    change = scale("db-primary", 8, 3, "atithc22-svg")
+
+    pull = store.propose(
+        proposed, change, "CONFLICT: scale to 8", "the explanation", "tok-dummy", 0
+    )
+
+    assert pull.number == 1
+    assert pull.branch == f"applymerge/{change.id}"
+    assert pull.url.endswith("/pull/1")
+    assert github.branches[pull.branch] == "c0"   # cut from the version they worked on
+    assert store.head()[0] == 0                    # and the live state is untouched
+
+
+def test_the_branch_is_cut_from_the_authors_own_version_not_from_the_head():
+    """So the pull request's diff is the disagreement, not a revert of what landed."""
+    store, github = a_store()
+    landed = store.read(0).copy_state()
+    landed.resources["db-primary"].fields["replicas"] = 5
+    winner = scale("db-primary", 5, 3, "atith-c")
+    store.append(landed, winner, "atith-c", "tok-atith", commit_message(winner, [], []))
+
+    loser_state = store.read(0).copy_state()
+    loser_state.resources["db-primary"].fields["replicas"] = 8
+    loser = scale("db-primary", 8, 3, "atithc22-svg")
+    pull = store.propose(loser_state, loser, "CONFLICT", "why", "tok-dummy", from_version=0)
+
+    assert github.branches[pull.branch] == "c0"    # v0, not the head c1
+    assert store.head()[0] == 1                     # the winner still stands
+
+
+def test_the_pull_request_body_carries_the_verdict():
+    store, github = a_store()
+    change = scale("db-primary", 8, 3, "atithc22-svg")
+    store.propose(store.read(0), change, "CONFLICT: scale", "no order applies both", "tok", 0)
+
+    _, body = github.pulls[0]
+    assert "no order applies both" in body
+
+
+def test_open_proposals_ignores_pull_requests_from_elsewhere():
+    store, github = a_store()
+    github.create_pull("someone else's PR", "", "feature/unrelated", "tok")
+    change = scale("db-primary", 8, 3, "atithc22-svg")
+    store.propose(store.read(0), change, "CONFLICT", "why", "tok", 0)
+
+    assert [p.branch for p in store.open_proposals()] == [f"applymerge/{change.id}"]
 
 
 # --- the World over a git-backed store -------------------------------------

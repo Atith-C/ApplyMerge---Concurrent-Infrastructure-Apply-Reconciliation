@@ -115,6 +115,16 @@ class CommitInfo(BaseModel):
         return parse_change(self.message)
 
 
+class PullRequest(BaseModel):
+    """A proposal that could not be merged, parked where it can be seen."""
+
+    number: int
+    title: str = ""
+    url: str = ""
+    branch: str = ""
+    state: str = "open"
+
+
 def commit_message(
     change: Change, invariants: list[str], reconciled_with: list[str]
 ) -> str:
@@ -198,8 +208,53 @@ class GitHub:
 
     # --- writing ------------------------------------------------------------
 
+    def create_branch(self, name: str, from_sha: str, token: str) -> None:
+        """Point a new branch at `from_sha`. Harmless if it already exists."""
+        try:
+            self._call(
+                "POST",
+                f"{API}/repos/{self.repo}/git/refs",
+                token,
+                {"ref": f"refs/heads/{name}", "sha": from_sha},
+            )
+        except GitHubError as failure:
+            if "already exists" not in str(failure).lower():
+                raise
+
+    def create_pull(
+        self, title: str, body: str, head: str, token: str, base: str | None = None
+    ) -> PullRequest:
+        """Open a pull request from `head` into the default branch."""
+        item = self._call(
+            "POST",
+            f"{API}/repos/{self.repo}/pulls",
+            token,
+            {"title": title, "body": body, "head": head, "base": base or self.branch},
+        )
+        return self._pull(item)
+
+    def list_pulls(self, token: str, state: str = "open") -> list[PullRequest]:
+        url = f"{API}/repos/{self.repo}/pulls?state={state}&per_page=100"
+        return [self._pull(item) for item in self._call("GET", url, token)]
+
+    @staticmethod
+    def _pull(item: dict[str, Any]) -> PullRequest:
+        return PullRequest(
+            number=item["number"],
+            title=item.get("title", ""),
+            url=item.get("html_url", ""),
+            branch=(item.get("head") or {}).get("ref", ""),
+            state=item.get("state", "open"),
+        )
+
     def write_file(
-        self, path: str, text: str, message: str, token: str, blob_sha: str
+        self,
+        path: str,
+        text: str,
+        message: str,
+        token: str,
+        blob_sha: str,
+        branch: str | None = None,
     ) -> CommitInfo:
         """Replace `path`, but only if it is still at `blob_sha`.
 
@@ -215,7 +270,7 @@ class GitHub:
                 "message": message,
                 "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
                 "sha": blob_sha,
-                "branch": self.branch,
+                "branch": branch or self.branch,
             },
         )
         commit = body["commit"]
