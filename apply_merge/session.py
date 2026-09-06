@@ -336,8 +336,30 @@ def derive_change(
             if value != resource.fields[field]:
                 edited.setdefault(resource_id, {})[field] = value
 
+    if not edited and edit.locks:
+        # An assertion rather than a change: nothing moved, but the operator pinned
+        # something. "I am relying on this still being what I was shown" is a real
+        # declarative statement, and it can fail — which is the point of asking.
+        resources = {lock.resource_id for lock in edit.locks}
+        if len(resources) > 1:
+            raise EditError(
+                f"An assertion covers one resource, but these pins span "
+                f"{', '.join(sorted(resources))}."
+            )
+        resource_id = resources.pop()
+        if resource_id not in snapshot.resources:
+            raise EditError(f"No resource '{resource_id}' in the state you are editing.")
+        held = snapshot.resources[resource_id].fields
+        for lock in edit.locks:
+            if lock.field not in held:
+                raise EditError(f"No field '{lock.field}' on {resource_id} to pin.")
+        edited = {resource_id: {lock.field: held[lock.field] for lock in edit.locks}}
+
     if not edited:
-        raise EditError("Nothing changed: this edit is identical to the state you loaded.")
+        raise EditError(
+            "Nothing changed and nothing pinned. Edit a value, or pin a field to "
+            "assert it still holds."
+        )
     if len(edited) > 1:
         raise EditError(
             f"One submission may change one resource, but this changes "
@@ -416,6 +438,12 @@ def _land(
     on: preconditions run again, and every invariant runs against the live result.
     """
     new_state, result = apply_single(world.state, change)
+    if result.applied and new_state.resources == world.state.resources:
+        # An assertion that held: every precondition and invariant checked out and
+        # nothing moved. There is nothing to write, and an empty commit would be a
+        # record of a question rather than of a change.
+        world.log(session.name, "CONFIRMED", change.description)
+        return result, False
     if result.applied:
         message = commit_message(
             change,
@@ -452,11 +480,16 @@ def _park(
     if not token:
         return None, "Sign in to keep a rejected change as a pull request."
 
-    # The proposal is what this operator's own base would have become. It applies
-    # cleanly there by construction — it was derived from it.
-    proposed, result = apply_single(world.snapshot(base), change)
-    if not result.applied:
-        return None, f"Could not stage the proposal: {result.explanation}"
+    # What this operator's base would have become. Written directly rather than
+    # through apply_single, because a change rejected for breaking an invariant still
+    # has an intent worth showing — "I want seven replicas and the fleet is full" is
+    # a question for a person, not something to discard quietly.
+    proposed = world.snapshot(base).copy_state()
+    target = proposed.resources.get(change.resource_id)
+    if target is None:
+        return None, f"Cannot stage a proposal for a resource that is not there: {change.resource_id}"
+    for post in change.postconditions:
+        target.fields[post.field] = post.value
 
     title = f"{outcome}: {change.description}"
     body = "\n".join([
@@ -491,6 +524,12 @@ def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submi
 
     if not missed:
         result, committed = _land(world, session, change, "", token)
+        parked, note = (None, "")
+        if not committed and result.outcome != "APPLIED":
+            # Rejected with nobody to blame it on: still an intent worth keeping.
+            parked, note = _park(
+                world, session, change, base, result.outcome, result.explanation, token
+            )
         return Submission(
             name=session.name,
             base_version=base,
@@ -502,6 +541,8 @@ def submit(world: World, session: Session, edit: Edit, token: str = "") -> Submi
             committed=committed,
             apply_result=result,
             state=world.state,
+            proposal=parked,
+            proposal_note=note,
         )
 
     overlap = (

@@ -199,6 +199,62 @@ def test_a_submission_that_cannot_become_a_change_says_why(bad_edit, message):
     assert message in str(raised.value)
 
 
+def test_pinning_without_changing_anything_is_an_assertion():
+    """"I am relying on this still being what I was shown" is a real statement."""
+    snapshot = world.snapshot(0)
+    change = derive_change(
+        snapshot, edit({}, locks=[("db-primary", "replicas")]), "Alice"
+    )
+
+    assert change.resource_id == "db-primary"
+    assert [(p.field, p.value) for p in change.postconditions] == [("replicas", 3)]
+    assert [(p.field, p.op, p.value) for p in change.preconditions] == [
+        ("replicas", "==", 3)
+    ]
+
+
+def test_an_assertion_that_holds_confirms_and_writes_nothing():
+    alice = world.open_session("Alice")
+    result = submit(world, alice, edit({}, locks=[("db-primary", "status")]))
+
+    assert result.outcome == "APPLIED"
+    assert result.committed is False          # nothing moved, so nothing to record
+    assert world.version == 0
+    assert [e.outcome for e in world.history] == ["CONFIRMED"]
+
+
+def test_an_assertion_fails_once_someone_changes_what_it_relied_on():
+    alice = world.open_session("Alice")
+    bob = world.open_session("Bob")
+    submit(world, bob, edit({"db-primary": {"status": "maintenance"}}))
+
+    result = submit(world, alice, edit({}, locks=[("db-primary", "status")]))
+
+    assert result.committed is False
+    assert result.outcome != "APPLIED"
+    assert world.state.resources["db-primary"].fields["status"] == "maintenance"
+
+
+def test_an_edit_that_changes_nothing_and_pins_nothing_says_both_ways_out():
+    snapshot = world.snapshot(0)
+    with pytest.raises(EditError) as raised:
+        derive_change(snapshot, edit({"db-primary": {"replicas": 3}}), "Alice")
+
+    assert "Edit a value, or pin a field" in str(raised.value)
+
+
+def test_an_assertion_may_not_span_two_resources():
+    snapshot = world.snapshot(0)
+    with pytest.raises(EditError) as raised:
+        derive_change(
+            snapshot,
+            edit({}, locks=[("db-primary", "status"), ("sg-web", "port")]),
+            "Alice",
+        )
+
+    assert "one resource" in str(raised.value)
+
+
 def test_a_pin_on_another_resource_is_refused():
     """Preconditions are checked against the change's target, so a foreign pin lies."""
     snapshot = world.snapshot(0)

@@ -15,7 +15,7 @@ from apply_merge.github_store import GitHubStore, StoreError, dumps, loads
 from apply_merge.invariants import DEFAULT_INVARIANTS
 from apply_merge.models import Change, Postcondition, Precondition
 from apply_merge.scenarios import base_state
-from apply_merge.session import World
+from apply_merge.session import Edit, World, submit
 
 
 class FakeGitHub:
@@ -338,6 +338,51 @@ def test_open_proposals_ignores_pull_requests_from_elsewhere():
     store.propose(store.read(0), change, "CONFLICT", "why", "tok", 0)
 
     assert [p.branch for p in store.open_proposals()] == [f"applymerge/{change.id}"]
+
+
+def test_a_change_rejected_on_its_own_is_parked_too():
+    """The path that matters most in practice: no rival, just a full fleet.
+
+    apply_single discards a state that breaks an invariant, which is right for the
+    live state and wrong for a proposal — "I want more replicas than the cap allows"
+    is a question for a person, not something to throw away.
+    """
+    full = base_state()
+    full.resources["db-primary"].fields["replicas"] = 6   # 6 + 4 = the cap exactly
+    store, github = a_store(full)
+    world = World(store)
+    alice = world.open_session("atith-c")
+
+    result = submit(
+        world, alice, Edit(resources={"db-primary": {"replicas": 7}}), token="tok-atith"
+    )
+
+    assert result.outcome == "INVARIANT_VIOLATED"
+    assert result.committed is False
+    assert store.head()[0] == 0                            # the live state is untouched
+    assert result.proposal is not None                     # but the intent is kept
+    assert result.proposal.branch.startswith("applymerge/")
+    proposed = github.blobs[f"{result.proposal.branch}:c0"]
+    assert '"replicas": 7' in proposed                     # the PR shows what was wanted
+
+
+def test_parking_failing_never_costs_you_the_verdict():
+    """GitHub refusing the pull request must not turn a correct answer into an error."""
+    store, github = a_store()
+    github.create_pull = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no PR permission"))
+    world = World(store)
+    alice = world.open_session("atith-c")
+    submit(world, alice, Edit(resources={"db-primary": {"replicas": 5}}), token="tok-atith")
+
+    bob = world.open_session("atithc22-svg")
+    bob.base_version = 0
+    result = submit(
+        world, bob, Edit(resources={"db-primary": {"replicas": 8}}), token="tok-dummy"
+    )
+
+    assert result.outcome == "CONFLICT"        # the verdict survives
+    assert result.proposal is None
+    assert "no PR permission" in result.proposal_note
 
 
 # --- the World over a git-backed store -------------------------------------

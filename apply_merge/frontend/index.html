@@ -482,6 +482,12 @@ function editorMarkup(panel) {
   }).join("");
 }
 
+function submitBlocked(panel, moved) {
+  // Something moved, or something is pinned: either is an intent worth submitting.
+  if (new Set(moved.map((m) => m.rid)).size > 1) return true;
+  return moved.length === 0 && panel.locks.size === 0;
+}
+
 function summaryMarkup(panel) {
   const moved = movedFields(panel);
   const touched = new Set(moved.map((m) => m.rid));
@@ -491,8 +497,17 @@ function summaryMarkup(panel) {
       == ${esc(val(fieldValue(panel, key)))}</div>`;
 
   if (!moved.length) {
-    return `<p class="text-sm text-slate-500">Nothing changed yet.</p>
-      ${pinList.length ? `<div class="mt-1.5">${pinList.map(pinned).join("")}</div>` : ""}`;
+    if (!pinList.length) {
+      return `<p class="text-sm text-slate-500">Nothing changed yet.
+        Edit a value, or pin a field to assert it still holds.</p>`;
+    }
+    // Nothing moved, but something is pinned: an assertion, not a change.
+    return `<p class="text-sm text-slate-700">Asserting these still hold:</p>
+      <div class="mt-1.5">${pinList.map(pinned).join("")}</div>
+      <p class="text-xs text-slate-500 mt-1.5">
+        Nothing will be written. If someone changed one of these while you were
+        looking, you will be told — that is the question being asked.
+      </p>`;
   }
 
   const lines = moved.map((m) => `
@@ -538,7 +553,7 @@ function renderPanel(index) {
   const panel = panels[index];
   const stale = panel.session.live_version > panel.session.base_version;
   const moved = movedFields(panel);
-  const blocked = !moved.length || new Set(moved.map((m) => m.rid)).size > 1;
+  const blocked = submitBlocked(panel, moved);
   const tone = index === 0 ? "bg-sky-700" : "bg-fuchsia-700";
 
   $(`panel-${index}`).innerHTML = `
@@ -600,9 +615,7 @@ function wirePanel(index) {
       wireLock(index, slot.querySelector("button[data-lock]"));
 
       root.querySelector("[data-summary]").innerHTML = summaryMarkup(panel);
-      const fields = movedFields(panel);
-      root.querySelector("[data-apply]").disabled =
-        !fields.length || new Set(fields.map((m) => m.rid)).size > 1;
+      root.querySelector("[data-apply]").disabled = submitBlocked(panel, movedFields(panel));
     }));
 
   root.querySelectorAll("button[data-lock]").forEach((button) => wireLock(index, button));
